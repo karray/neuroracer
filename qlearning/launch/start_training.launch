@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+    <!-- This version uses the openai_ros environments -->
+    <rosparam command="load" file="$(find qlearning)/config/params.yaml" />
+    <!-- Launch the training system -->
+    <node pkg="qlearning" name="neuroracer" type="start_qlearning.py" output="screen"/>
+</launch>
