@@ -73,7 +73,7 @@ class Agent():
         
         if os.path.isfile(self.weight_backup):
             model.load_weights(self.weight_backup)
-            # self.exploration_rate = self.exploration_min
+            self.exploration_rate = self.exploration_min
         return model
 
     # def to_grayscale(self, img):
@@ -147,10 +147,10 @@ class NeuroRacer:
                 for i in range(4):
                     history.append(state)
                     next_history.append(state)
-                i = 0
+                # i = 0
 
                 while not done:
-                    i+=1
+                    # i+=1
                     # if index_episode % 50 == 0:
                         # self.env.render()
                     action = self.agent.act(history)
@@ -162,17 +162,17 @@ class NeuroRacer:
                     history.append(next_state)
                     cumulated_reward += reward
 
-                    if i > self.sample_batch_size:
-                        rospy.logwarn("Episode {} of {}. In-episode training: {}".format(index_episode, self.episodes))
-                        i = 0
-                        self.agent.replay(self.sample_batch_size)
+                    # if i > self.sample_batch_size:
+                    #     rospy.logwarn("Episode {} of {}. In-episode training: {}".format(index_episode, self.episodes))
+                    #     i = 0
+                    #     self.agent.replay(self.sample_batch_size)
 
                 if self.highest_reward < cumulated_reward:
                     self.highest_reward = cumulated_reward
 
                 rospy.logwarn("Episode {} of {}. cumulated_reward: {}".format(index_episode, self.episodes, cumulated_reward))
                 
-                self.agent.replay(self.sample_batch_size*4)
+                self.agent.replay(self.sample_batch_size)
                 # if index_episode % 50 == 0:
                 #     self.env.close()
         finally:
