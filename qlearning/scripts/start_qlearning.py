@@ -32,7 +32,7 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 20480
+        self.max_buffer         = 10240
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
         self.gamma              = 0.9
@@ -94,6 +94,7 @@ class Agent():
 #         return arr
 
     def save_model(self):
+        rospy.loginfo("Model saved"), 
         self.brain.save(self.weight_backup)
 
     def act(self, history):
@@ -125,10 +126,12 @@ class Agent():
             target_f[0][action] = target
             self.brain.fit(state, target_f, epochs=1, verbose=0)
 
-        self.save_model()
         
         if self.exploration_rate > self.exploration_min:
             self.exploration_rate *= self.exploration_decay
+
+        self.save_model()
+        rospy.loginfo("Done!"), 
 
 class NeuroRacer:
     def __init__(self, always_explore=False):
@@ -136,7 +139,7 @@ class NeuroRacer:
         self.episodes          = 50000
         self.env               = gym.make('NeuroRacer-v0')
 
-        self.highest_reward    = 0
+        self.highest_reward    = -np.inf
 
         self.state_size        = self.env.observation_space.shape
         self.action_size       = self.env.action_space.n
