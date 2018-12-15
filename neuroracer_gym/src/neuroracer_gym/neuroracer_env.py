@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 
 import rospy
@@ -13,9 +15,11 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from gym import spaces
 from gym.envs.registration import register
 
-import cv2
+# import cv2
 
 timestep_limit_per_episode = 10000 # Can be any Value
+
+default_sleep = 3
 
 register(
         id='NeuroRacer-v0',
@@ -42,12 +46,14 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
                                             start_init_physics_parameters=False)
 
         self.gazebo.unpauseSim()
+        time.sleep(default_sleep)
+
         #self.controllers_object.reset_controllers()
         self._check_all_sensors_ready()
         
         self._init_camera()
 
-        rospy.Subscriber("/scan", LaserScan, self._laser_scan_callback)
+        self.laser_subscription = rospy.Subscriber("/scan", LaserScan, self._laser_scan_callback)
         
         self.drive_control_publisher= rospy.Publisher("/vesc/ackermann_cmd_mux/input/navigation",
                                                        AckermannDriveStamped,
@@ -59,12 +65,21 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         
         rospy.logdebug("Finished NeuroRacerEnv INIT...")
 
+    def reset(self):
+        params = super(NeuroRacerEnv, self).reset()
+        self.gazebo.unpauseSim()
+        time.sleep(default_sleep)
+        self.gazebo.pauseSim()
+
+        return params
+
     def _init_params(self):
         self.reward_range = (-np.inf, np.inf)
         self.cumulated_steps = 0.0
-        self.last_action = 0
+        self.last_action = 1
+        self.right_left = False
 
-        self.min_distance = .15
+        self.min_distance = .16
         
         # self.steerin_angle_min = -1 # rospy.get_param('neuroracer_env/action_space/steerin_angle_min')
         # self.steerin_angle_max = 1 # rospy.get_param('neuroracer_env/action_space/steerin_angle_max')
@@ -159,7 +174,24 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
             except:
                 rospy.logerr("Current /scan not ready yet, retrying for getting laser_scan")
         return self.laser_scan
-        
+
+    def _get_additional_laser_scan(self):
+        laser_scans = []
+        # if self.laser_subscription:
+        #     self.laser_subscription.unregister()
+        self.gazebo.unpauseSim()
+        while len(laser_scans) < 2  and not rospy.is_shutdown():
+            try:
+                data = rospy.wait_for_message("/scan", LaserScan, timeout=1.0)
+                laser_scans.append(data.ranges)
+            except Exception as e:
+                rospy.logerr("getting laser data...")
+                print(e)
+        self.gazebo.pauseSim()
+        # self.laser_subscription = rospy.Subscriber("/scan", LaserScan, self._laser_scan_callback)
+
+        return laser_scans
+
     def _laser_scan_callback(self, data):
         self.laser_scan = data
 
@@ -184,7 +216,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         rospy.logdebug("All Publishers READY")
     
     def _set_init_pose(self):
-        self.steering(1)
+        self.steering(1, speed=0)
         return True
     
     def _init_env_variables(self):
@@ -192,11 +224,14 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         self._episode_done = False
 
     def _compute_reward(self, observations, done):
-        reward = 1
+        reward = -0.01
+
+        if self.right_left:
+            reward = -1
 
         if not done:
             if self.last_action == 1:
-                reward = 2
+                reward = 1
         else:
             reward = -1000
 
@@ -212,8 +247,11 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
             steering_angle = -0.7
         if action == 2:
             steering_angle = 0.7
+
+        self.right_left =  action != 1 & self.last_action != 1 & self.last_action != action
+
         self.last_action = action
-        self.steering(steering_angle)
+        self.steering(steering_angle, speed=1)
 
     def _get_obs(self):
         return self.get_camera_image()
@@ -222,20 +260,20 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         self._episode_done = self._is_collided()
         return self._episode_done
         
-    def _create_steering_command(self, steering_angle):
+    def _create_steering_command(self, steering_angle, speed):
         # steering_angle = np.clip(steering_angle,self.steerin_angle_min, self.steerin_angle_max)
         
         a_d_s = AckermannDriveStamped()
         a_d_s.drive.steering_angle = steering_angle
         a_d_s.drive.steering_angle_velocity = 0.0
-        a_d_s.drive.speed = 1  # from 0 to 1
+        a_d_s.drive.speed = speed  # from 0 to 1
         a_d_s.drive.acceleration = 0.0
         a_d_s.drive.jerk = 0.0
 
         return a_d_s
 
-    def steering(self, steering_angle):
-        command = self._create_steering_command(steering_angle)
+    def steering(self, steering_angle, speed=0):
+        command = self._create_steering_command(steering_angle, speed)
         self.drive_control_publisher.publish(command)
 
     # def get_odom(self):
@@ -259,10 +297,16 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         r = np.array(self.laser_scan.ranges, dtype=np.float32)
         crashed = np.any(r <= self.min_distance)
         if crashed:
-            rospy.loginfo('the auto crashed! :(')
-            rospy.loginfo('distance: {}'.format(r.min()))
-            print(np.where(r <= self.min_distance))
-            print('form', r.shape)
+            rospy.logdebug('the auto crashed! :(')
+            rospy.logdebug('distance: {}'.format(r.min()))
+            data = np.array(self._get_additional_laser_scan(), dtype=np.float32)
+            data = np.concatenate((np.expand_dims(r, axis=0), data), axis=0)
+            data_mean = np.mean(data, axis=0)
+            rospy.logdebug('meaned distance: {}'.format(data_mean.min()))
+
+            crashed = np.any(data_mean <= self.min_distance)
+            # print(np.where(r <= self.min_distance))
+            # print('form', r.shape)
 
 
         return crashed

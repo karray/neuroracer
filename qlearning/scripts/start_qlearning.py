@@ -32,11 +32,11 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 2048
+        self.max_buffer         = 20480
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
         self.gamma              = 0.9
-        self.exploration_rate   = 0.7
+        self.exploration_rate   = 0.85
         self.exploration_min    = 0.01
         self.exploration_decay  = 0.995
         self.brain              = self._build_model()
@@ -111,6 +111,9 @@ class Agent():
     def replay(self, sample_batch_size):
         if len(self.memory) < sample_batch_size:
             return
+
+        rospy.loginfo("Replaying..."), 
+
         sample_batch = random.sample(self.memory, sample_batch_size)
         for state, action, reward, next_state, done in sample_batch:
             target = reward
@@ -121,9 +124,11 @@ class Agent():
             target_f = self.brain.predict(state)
             target_f[0][action] = target
             self.brain.fit(state, target_f, epochs=1, verbose=0)
+
+        self.save_model()
+        
         if self.exploration_rate > self.exploration_min:
             self.exploration_rate *= self.exploration_decay
-
 
 class NeuroRacer:
     def __init__(self, always_explore=False):
@@ -138,13 +143,21 @@ class NeuroRacer:
         self.agent             = Agent((self.state_size[0], self.state_size[1], self.state_size[2]*4), self.action_size,
                                         always_explore=always_explore)
 
+    def format_time(self, t):
+        m, s = divmod(int(time.time() - t), 60)
+        h, m = divmod(m, 60)
+        return "%d:%02d:%02d" % (h, m, s)
+
     def run(self):
         try:
+            total_time = time.time()
             for index_episode in range(self.episodes):
+                episode_time = time.time()
+
                 state = self.env.reset()
                 
-                for skip in range(100):
-                    state, reward, done, _ = self.env.step(1)
+                # for skip in range(100):
+                #     state, _, _, _ = self.env.step(1)
 
                 # state = np.expand_dims(state, axis=0)
 
@@ -155,14 +168,14 @@ class NeuroRacer:
                 for i in range(4):
                     history.append(state)
                     next_history.append(state)
-                # i = 0
-
+                i = 0
+                steps = 0
                 while not done:
-                    # i+=1
+                    i+=1
+                    steps+=1
                     # if index_episode % 50 == 0:
-                        # self.env.render()
+                    #     self.env.render()
                     action = self.agent.act(history)
-                    rospy.loginfo("action: {}".format(action))
 
                     next_state, reward, done, _ = self.env.step(action)
                     next_history.append(next_state)
@@ -170,18 +183,23 @@ class NeuroRacer:
                     history.append(next_state)
                     cumulated_reward += reward
 
-                    # if i > self.sample_batch_size:
-                    #     rospy.logwarn("Episode {} of {}. In-episode training: {}".format(index_episode, self.episodes))
-                    #     i = 0
-                    #     self.agent.replay(self.sample_batch_size)
+                    if i > self.sample_batch_size*4:
+                        rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))
+                        rospy.loginfo("Step {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
+                        rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
+                                                                        self.format_time(total_time)))
+                        i = 0
+                        self.agent.replay(self.sample_batch_size)
 
                 if self.highest_reward < cumulated_reward:
                     self.highest_reward = cumulated_reward
 
-                rospy.logwarn("Episode {} of {}. cumulated_reward: {}".format(index_episode, self.episodes, cumulated_reward))
+                rospy.loginfo("Episode {} of {}".format(index_episode, self.episodes))
+                rospy.loginfo("total steps {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
+                rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
+                                                                self.format_time(total_time)))
                 
-                self.agent.replay(self.sample_batch_size)
-                self.agent.save_model()
+                self.agent.replay(self.sample_batch_size*4)
                 # if index_episode % 50 == 0:
                 #     self.env.close()
         finally:
