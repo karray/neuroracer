@@ -24,8 +24,9 @@ from neuroracer_gym import neuroracer_env
 
 
 class Agent():
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, always_explore=False):
         rospack = rospkg.RosPack()
+        self.always_explore = always_explore
         self.working_dir = rospack.get_path('qlearning')
         self.weight_backup      = os.path.join(self.working_dir, "neuroracer.h5")
 
@@ -73,7 +74,9 @@ class Agent():
         
         if os.path.isfile(self.weight_backup):
             model.load_weights(self.weight_backup)
-            self.exploration_rate = self.exploration_min
+            if not self.always_explore:
+                self.exploration_rate = self.exploration_min
+            
         return model
 
     # def to_grayscale(self, img):
@@ -114,7 +117,7 @@ class Agent():
             if not done:
                 target = reward + self.gamma * np.amax(self.brain.predict(next_state)[0])
             if not target:
-                print('=========== error ==============')
+                rospy.logerr("target is null: " + str(target))
             target_f = self.brain.predict(state)
             target_f[0][action] = target
             self.brain.fit(state, target_f, epochs=1, verbose=0)
@@ -123,7 +126,7 @@ class Agent():
 
 
 class NeuroRacer:
-    def __init__(self):
+    def __init__(self, always_explore=False):
         self.sample_batch_size = 32
         self.episodes          = 50000
         self.env               = gym.make('NeuroRacer-v0')
@@ -132,7 +135,8 @@ class NeuroRacer:
 
         self.state_size        = self.env.observation_space.shape
         self.action_size       = self.env.action_space.n
-        self.agent             = Agent((self.state_size[0], self.state_size[1], self.state_size[2]*4), self.action_size)
+        self.agent             = Agent((self.state_size[0], self.state_size[1], self.state_size[2]*4), self.action_size,
+                                        always_explore=always_explore)
 
     def run(self):
         try:
@@ -189,9 +193,10 @@ if __name__ == '__main__':
 
     rospy.init_node('neuroracer_qlearn', anonymous=True, log_level=rospy.INFO)
 
+    always_explore = rospy.get_param('/neuroracer_gym/always_explore')
     # Create the Gym environment
-    game = NeuroRacer()
-    rospy.loginfo("Gym environment done")
+    game = NeuroRacer(always_explore=always_explore)
+    rospy.logwarn("Gym environment done. always_explore = " + str(always_explore))
 
     # Set the logging system
     # rospack = rospkg.RosPack()
