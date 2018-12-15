@@ -136,7 +136,7 @@ class Agent():
 class NeuroRacer:
     def __init__(self, always_explore=False):
         self.sample_batch_size = 1024
-        self.episodes          = 50000
+        self.episodes          = 3000
         self.env               = gym.make('NeuroRacer-v0')
 
         self.highest_reward    = -np.inf
@@ -186,7 +186,7 @@ class NeuroRacer:
                     history.append(next_state)
                     cumulated_reward += reward
 
-                    if i > 5000:
+                    if i > 1024:
                         rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))
                         rospy.loginfo("Step {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
                         rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
@@ -202,7 +202,7 @@ class NeuroRacer:
                 rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
                                                                 self.format_time(total_time)))
                 
-                self.agent.replay(self.sample_batch_size*2)
+                self.agent.replay(self.sample_batch_size)
                 # if index_episode % 50 == 0:
                 #     self.env.close()
         finally:
