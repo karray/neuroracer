@@ -19,7 +19,7 @@ from gym.envs.registration import register
 
 timestep_limit_per_episode = 10000 # Can be any Value
 
-default_sleep = 3
+default_sleep = 2
 
 register(
         id='NeuroRacer-v0',
@@ -79,7 +79,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         self.last_action = 1
         self.right_left = False
 
-        self.min_distance = .24
+        self.min_distance = .255
         
         # self.steerin_angle_min = -1 # rospy.get_param('neuroracer_env/action_space/steerin_angle_min')
         # self.steerin_angle_max = 1 # rospy.get_param('neuroracer_env/action_space/steerin_angle_max')
