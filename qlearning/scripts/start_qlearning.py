@@ -187,7 +187,7 @@ class NeuroRacer:
 
 if __name__ == '__main__':
 
-    rospy.init_node('neuroracer_qlearn', anonymous=True, log_level=rospy.DEBUG)
+    rospy.init_node('neuroracer_qlearn', anonymous=True, log_level=rospy.INFO)
 
     # Create the Gym environment
     game = NeuroRacer()

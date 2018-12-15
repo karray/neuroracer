@@ -196,9 +196,9 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
 
         if not done:
             if self.last_action == 1:
-                reward = 10
+                reward = 2
         else:
-            reward = -50
+            reward = -1000
 
         self.cumulated_reward += reward
         self.cumulated_steps += 1
