@@ -32,7 +32,7 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 10240
+        self.max_buffer         = 3000
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
         self.gamma              = 0.9
@@ -136,7 +136,7 @@ class Agent():
 class NeuroRacer:
     def __init__(self, always_explore=False):
         self.sample_batch_size = 1024
-        self.episodes          = 3000
+        self.episodes          = 50000
         self.env               = gym.make('NeuroRacer-v0')
 
         self.highest_reward    = -np.inf

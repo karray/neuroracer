@@ -79,7 +79,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         self.last_action = 1
         self.right_left = False
 
-        self.min_distance = .18
+        self.min_distance = .21
         
         # self.steerin_angle_min = -1 # rospy.get_param('neuroracer_env/action_space/steerin_angle_min')
         # self.steerin_angle_max = 1 # rospy.get_param('neuroracer_env/action_space/steerin_angle_max')
