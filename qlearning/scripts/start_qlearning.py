@@ -138,6 +138,10 @@ class NeuroRacer:
         try:
             for index_episode in range(self.episodes):
                 state = self.env.reset()
+                
+                for skip in range(100):
+                    state, reward, done, _ = self.env.step(1)
+
                 # state = np.expand_dims(state, axis=0)
 
                 done = False
@@ -173,6 +177,7 @@ class NeuroRacer:
                 rospy.logwarn("Episode {} of {}. cumulated_reward: {}".format(index_episode, self.episodes, cumulated_reward))
                 
                 self.agent.replay(self.sample_batch_size)
+                self.agent.save_model()
                 # if index_episode % 50 == 0:
                 #     self.env.close()
         finally:

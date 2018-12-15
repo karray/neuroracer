@@ -257,11 +257,11 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
 
     def _is_collided(self):
         r = np.array(self.laser_scan.ranges, dtype=np.float32)
-        crashed = np.any(r < self.min_distance)
+        crashed = np.any(r <= self.min_distance)
         if crashed:
             rospy.loginfo('the auto crashed! :(')
             rospy.loginfo('distance: {}'.format(r.min()))
-            print(np.where(r < self.min_distance))
+            print(np.where(r <= self.min_distance))
             print('form', r.shape)
 
 
