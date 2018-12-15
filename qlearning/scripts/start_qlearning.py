@@ -22,6 +22,7 @@ import rospkg
 
 from neuroracer_gym import neuroracer_env
 
+n_frames = 16
 
 class Agent():
     def __init__(self, state_size, action_size, always_explore=False):
@@ -143,7 +144,7 @@ class NeuroRacer:
 
         self.state_size        = self.env.observation_space.shape
         self.action_size       = self.env.action_space.n
-        self.agent             = Agent((self.state_size[0], self.state_size[1], self.state_size[2]*4), self.action_size,
+        self.agent             = Agent((self.state_size[0], self.state_size[1], self.state_size[2]*n_frames), self.action_size,
                                         always_explore=always_explore)
 
     def format_time(self, t):
@@ -166,9 +167,9 @@ class NeuroRacer:
 
                 done = False
                 cumulated_reward = 0
-                history = deque(maxlen=4)
-                next_history = deque(maxlen=4)
-                for i in range(4):
+                history = deque(maxlen=n_frames)
+                next_history = deque(maxlen=n_frames)
+                for i in range(n_frames):
                     history.append(state)
                     next_history.append(state)
                 i = 0
