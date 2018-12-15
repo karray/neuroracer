@@ -132,7 +132,7 @@ class Agent():
 
 class NeuroRacer:
     def __init__(self, always_explore=False):
-        self.sample_batch_size = 32
+        self.sample_batch_size = 1024
         self.episodes          = 50000
         self.env               = gym.make('NeuroRacer-v0')
 
