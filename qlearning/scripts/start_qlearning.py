@@ -183,7 +183,7 @@ class NeuroRacer:
                     history.append(next_state)
                     cumulated_reward += reward
 
-                    if i > self.sample_batch_size*4:
+                    if i > 10000:
                         rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))
                         rospy.loginfo("Step {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
                         rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
@@ -199,12 +199,12 @@ class NeuroRacer:
                 rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
                                                                 self.format_time(total_time)))
                 
-                self.agent.replay(self.sample_batch_size*4)
+                self.agent.replay(self.sample_batch_size)
                 # if index_episode % 50 == 0:
                 #     self.env.close()
         finally:
             self.env.close()
-            self.agent.save_model()
+            # self.agent.save_model()
             # print("Best score: " + str(self.best_score))
 
 if __name__ == '__main__':
