@@ -251,7 +251,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         self.right_left =  action != 1 & self.last_action != 1 & self.last_action != action
 
         self.last_action = action
-        self.steering(steering_angle, speed=1)
+        self.steering(steering_angle, speed=10)
 
     def _get_obs(self):
         return self.get_camera_image()
