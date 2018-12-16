@@ -33,7 +33,7 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 3000
+        self.max_buffer         = 2000
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
         self.gamma              = 0.9
@@ -55,14 +55,15 @@ class Agent():
         # model.add(MaxPooling2D((2, 2),padding='same'))
         model.add(Dropout(0.25))
 
-        model.add(Conv2D(32, (3, 3), strides=(2, 2), padding='same'))
-        model.add(LeakyReLU(alpha=0.1))
-        model.add(Dropout(0.25))
+        # model.add(Conv2D(32, (3, 3), strides=(2, 2), padding='same'))
+        # model.add(LeakyReLU(alpha=0.1))
+        # model.add(Dropout(0.25))
 
         model.add(Flatten())
-        model.add(Dense(64))
-        model.add(LeakyReLU(alpha=0.1))      
-        model.add(Dropout(0.1))
+
+        # model.add(Dense(64))
+        # model.add(LeakyReLU(alpha=0.1))      
+        # model.add(Dropout(0.1))
 
         model.add(Dense(32))
         model.add(LeakyReLU(alpha=0.1))      
@@ -136,7 +137,7 @@ class Agent():
 
 class NeuroRacer:
     def __init__(self, always_explore=False):
-        self.sample_batch_size = 1024
+        self.sample_batch_size = 256
         self.episodes          = 50000
         self.env               = gym.make('NeuroRacer-v0')
 
