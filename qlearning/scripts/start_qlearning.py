@@ -204,6 +204,7 @@ class NeuroRacer:
                 rospy.loginfo("total steps {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
                 rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
                                                                 self.format_time(total_time)))
+                rospy.loginfo("exploration_rate {}".format(self.agent.exploration_rate))
                 
                 # self.agent.replay(self.sample_batch_size)
                 # if index_episode % 50 == 0:
