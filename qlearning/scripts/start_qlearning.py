@@ -176,6 +176,7 @@ class NeuroRacer:
                 i = 0
                 steps = 0
                 while not done:
+                    i+=1
                     steps+=1
                     # if index_episode % 50 == 0:
                     #     self.env.render()
@@ -194,7 +195,6 @@ class NeuroRacer:
                         #                                                 self.format_time(total_time)))
                         i = 0
                         self.agent.replay(self.sample_batch_size)
-                    i+=1
                     
 
                 if self.highest_reward < cumulated_reward:
