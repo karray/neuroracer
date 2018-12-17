@@ -16,17 +16,13 @@ from keras.layers import Conv2D, MaxPooling2D
 from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
 
-from rl.agents import DDPGAgent
-from rl.memory import SequentialMemory
-from rl.random import OrnsteinUhlenbeckProcess
-
 # ROS packages required
 import rospy
 import rospkg
 
 from neuroracer_gym import neuroracer_env
 
-n_frames = 16
+n_frames = 8
 
 class Agent():
     def __init__(self, state_size, action_size, always_explore=False):
@@ -180,7 +176,6 @@ class NeuroRacer:
                 i = 0
                 steps = 0
                 while not done:
-                    i+=1
                     steps+=1
                     # if index_episode % 50 == 0:
                     #     self.env.render()
@@ -192,13 +187,15 @@ class NeuroRacer:
                     history.append(next_state)
                     cumulated_reward += reward
 
-                    if i > 1024:
-                        rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))
-                        rospy.loginfo("Step {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
-                        rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
-                                                                        self.format_time(total_time)))
+                    if i > 512:
+                        # rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))
+                        # rospy.loginfo("Step {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
+                        # rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
+                        #                                                 self.format_time(total_time)))
                         i = 0
                         self.agent.replay(self.sample_batch_size)
+                    i+=1
+                    
 
                 if self.highest_reward < cumulated_reward:
                     self.highest_reward = cumulated_reward
@@ -208,7 +205,7 @@ class NeuroRacer:
                 rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
                                                                 self.format_time(total_time)))
                 
-                self.agent.replay(self.sample_batch_size)
+                # self.agent.replay(self.sample_batch_size)
                 # if index_episode % 50 == 0:
                 #     self.env.close()
         finally:
