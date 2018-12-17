@@ -224,7 +224,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         self._episode_done = False
 
     def _compute_reward(self, observations, done):
-        reward = -0.01
+        reward = -0.001
 
         if self.right_left:
             reward = -1
@@ -233,7 +233,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
             if self.last_action == 1:
                 reward = 1
         else:
-            reward = -1000
+            reward = -100
 
         self.cumulated_reward += reward
         self.cumulated_steps += 1
@@ -251,7 +251,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         self.right_left =  action != 1 & self.last_action != 1 & self.last_action != action
 
         self.last_action = action
-        self.steering(steering_angle, speed=6)
+        self.steering(steering_angle, speed=10)
 
     def _get_obs(self):
         return self.get_camera_image()
@@ -287,7 +287,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
     
     def get_camera_image(self):
         try:
-            cv_image = self.bridge.compressed_imgmsg_to_cv2(self.camera_msg)
+            cv_image = self.bridge.compressed_imgmsg_to_cv2(self.camera_msg).astype('float32')/255.0
         except Exception as e:
             rospy.logerr("CvBridgeError: Error converting image")
             rospy.logerr(e)

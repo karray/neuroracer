@@ -16,6 +16,10 @@ from keras.layers import Conv2D, MaxPooling2D
 from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
 
+from rl.agents import DDPGAgent
+from rl.memory import SequentialMemory
+from rl.random import OrnsteinUhlenbeckProcess
+
 # ROS packages required
 import rospy
 import rospkg
