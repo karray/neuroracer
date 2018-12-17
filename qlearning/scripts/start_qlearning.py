@@ -156,6 +156,8 @@ class NeuroRacer:
     def run(self):
         try:
             total_time = time.time()
+            save_interval = 0
+
             for index_episode in range(self.episodes):
                 episode_time = time.time()
 
@@ -173,7 +175,6 @@ class NeuroRacer:
                 for i in range(n_frames):
                     history.append(state)
                     next_history.append(state)
-                save_interval = 0
                 steps = 0
                 while not done:
                     steps+=1
@@ -190,8 +191,12 @@ class NeuroRacer:
                     if save_interval > 512:
                         save_interval = 0
                         self.agent.replay(self.sample_batch_size)
+                        # rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))
+                        # rospy.loginfo("Step {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
+                        # rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
+                        #                                                 self.format_time(total_time)))
                     save_interval+=1
-                    print(save_interval)
+                    
 
                 if self.highest_reward < cumulated_reward:
                     self.highest_reward = cumulated_reward
