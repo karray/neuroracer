@@ -20,7 +20,7 @@ from keras.layers.advanced_activations import LeakyReLU
 import rospy
 import rospkg
 
-from neuroracer_gym import neuroracer_env
+from neuroracer_gym.tasks import neuroracer_discrete_task
 
 n_frames = 8
 
@@ -28,7 +28,7 @@ class Agent():
     def __init__(self, state_size, action_size, always_explore=False):
         rospack = rospkg.RosPack()
         self.always_explore = always_explore
-        self.working_dir = rospack.get_path('qlearning')
+        self.working_dir = rospack.get_path('neuroracer_gym_rl')
         self.weight_backup      = os.path.join(self.working_dir, "neuroracer.h5")
 
         self.state_size         = state_size
@@ -133,7 +133,6 @@ class Agent():
             self.exploration_rate *= self.exploration_decay
 
         self.save_model()
-        rospy.loginfo("Done!"), 
 
 class NeuroRacer:
     def __init__(self, always_explore=False):

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(qlearning)
+project(neuroracer_gym_rl)
 
 find_package(catkin REQUIRED COMPONENTS
   neuroracer_gym

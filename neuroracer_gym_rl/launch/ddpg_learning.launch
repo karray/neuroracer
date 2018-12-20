@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+    <!-- This version uses the openai_ros environments -->
+    <!-- <rosparam command="load" file="$(find neuroracer_gym_rl)/config/params.yaml" /> -->
+    <!-- Launch the training system -->
+    <node pkg="neuroracer_gym_rl" name="neuroracer_gym_rl" type="ddpg.py" output="screen"/>
+</launch>

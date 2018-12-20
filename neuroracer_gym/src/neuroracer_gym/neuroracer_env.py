@@ -17,19 +17,11 @@ from gym.envs.registration import register
 
 # import cv2
 
-timestep_limit_per_episode = 10000 # Can be any Value
-
-default_sleep = 2
-
-register(
-        id='NeuroRacer-v0',
-        entry_point='neuroracer_gym:neuroracer_env.NeuroRacerEnv',
-        timestep_limit=timestep_limit_per_episode,
-    )
+default_sleep = 1
 
 class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
     def __init__(self):
-        self._init_params()
+        self.min_distance = .255
 
         self.bridge = CvBridge()
 
@@ -73,20 +65,6 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
 
         return params
 
-    def _init_params(self):
-        self.reward_range = (-np.inf, np.inf)
-        self.cumulated_steps = 0.0
-        self.last_action = 1
-        self.right_left = False
-
-        self.min_distance = .255
-        
-        # self.steerin_angle_min = -1 # rospy.get_param('neuroracer_env/action_space/steerin_angle_min')
-        # self.steerin_angle_max = 1 # rospy.get_param('neuroracer_env/action_space/steerin_angle_max')
-        # self.action_space = spaces.Box(low=np.array([self.steerin_angle_min], dtype=np.float32), 
-        #                         high=np.array([self.steerin_angle_max], dtype=np.float32))
-        self.action_space = spaces.Discrete(3)
-
     def _check_all_systems_ready(self):
         """
         Checks that all the sensors, publishers and other simulation systems are
@@ -101,38 +79,9 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
 
     def _check_all_sensors_ready(self):
         rospy.logdebug("START ALL SENSORS READY")
-        # self._check_odom_ready()
-        # self._check_imu_ready()
         self._check_laser_scan_ready()
         self._check_camera_ready()
         rospy.logdebug("ALL SENSORS READY")
-
-    # def _check_odom_ready(self):
-    #     self.odom = None
-    #     rospy.logdebug("Waiting for /odom to be READY...")
-    #     while self.odom is None and not rospy.is_shutdown():
-    #         try:
-    #             self.odom = rospy.wait_for_message("/odom", Odometry, timeout=5.0)
-    #             rospy.logdebug("Current /odom READY=>")
-
-    #         except:
-    #             rospy.logerr("Current /odom not ready yet, retrying for getting odom")
-
-    #     return self.odom
-        
-        
-    # def _check_imu_ready(self):
-    #     self.imu = None
-    #     rospy.logdebug("Waiting for /imu to be READY...")
-    #     while self.imu is None and not rospy.is_shutdown():
-    #         try:
-    #             self.imu = rospy.wait_for_message("/imu", Imu, timeout=5.0)
-    #             rospy.logdebug("Current /imu READY=>")
-
-    #         except:
-    #             rospy.logerr("Current /imu not ready yet, retrying for getting imu")
-
-    #     return self.imu
 
     def _check_camera_ready(self):
         self.camera_msg = None
@@ -151,7 +100,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         # self.color_scale = "bgr8" # config["color_scale"]
         self.input_shape = img.shape
         obs_low = 0
-        obs_high = 255
+        obs_high = 1
         self.observation_space = spaces.Box(low=obs_low, high=obs_high, shape=self.input_shape)
 
         img_dims = img.shape[0]*img.shape[1]*img.shape[2]
@@ -177,8 +126,6 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
 
     def _get_additional_laser_scan(self):
         laser_scans = []
-        # if self.laser_subscription:
-        #     self.laser_subscription.unregister()
         self.gazebo.unpauseSim()
         while len(laser_scans) < 2  and not rospy.is_shutdown():
             try:
@@ -188,7 +135,6 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
                 rospy.logerr("getting laser data...")
                 print(e)
         self.gazebo.pauseSim()
-        # self.laser_subscription = rospy.Subscriber("/scan", LaserScan, self._laser_scan_callback)
 
         return laser_scans
 
@@ -214,44 +160,27 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         rospy.logdebug("drive_control_publisher Publisher Connected")
 
         rospy.logdebug("All Publishers READY")
-    
+
     def _set_init_pose(self):
-        self.steering(1, speed=0)
-        return True
-    
+        """Sets the Robot in its init pose
+        """
+        raise NotImplementedError()
+
     def _init_env_variables(self):
-        self.cumulated_reward = 0.0
-        self._episode_done = False
+        """Inits variables needed to be initialised each time we reset at the start
+        of an episode.
+        """
+        raise NotImplementedError()
 
     def _compute_reward(self, observations, done):
-        reward = -0.001
-
-        if self.right_left:
-            reward = -1
-
-        if not done:
-            if self.last_action == 1:
-                reward = 1
-        else:
-            reward = -100
-
-        self.cumulated_reward += reward
-        self.cumulated_steps += 1
-        
-        return reward
-
+        """Calculates the reward to give based on the observations given.
+        """
+        raise NotImplementedError()
 
     def _set_action(self, action):
-        steering_angle = 0
-        if action == 0:
-            steering_angle = -0.7
-        if action == 2:
-            steering_angle = 0.7
-
-        self.right_left =  action != 1 & self.last_action != 1 & self.last_action != action
-
-        self.last_action = action
-        self.steering(steering_angle, speed=10)
+        """Applies the given action to the simulation.
+        """
+        raise NotImplementedError()
 
     def _get_obs(self):
         return self.get_camera_image()
@@ -272,7 +201,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
 
         return a_d_s
 
-    def steering(self, steering_angle, speed=0):
+    def steering(self, steering_angle, speed):
         command = self._create_steering_command(steering_angle, speed)
         self.drive_control_publisher.publish(command)
 
@@ -305,8 +234,5 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
             rospy.logdebug('meaned distance: {}'.format(data_mean.min()))
 
             crashed = np.any(data_mean <= self.min_distance)
-            # print(np.where(r <= self.min_distance))
-            # print('form', r.shape)
-
 
         return crashed

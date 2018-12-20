@@ -4,7 +4,7 @@
 
     <param name="/neuroracer_gym/always_explore" value="$(arg always_explore)" type="boolean"/>
     <!-- This version uses the openai_ros environments -->
-    <rosparam command="load" file="$(find qlearning)/config/params.yaml" />
+    <!-- <rosparam command="load" file="$(find neuroracer_gym_rl)/config/params.yaml" /> -->
     <!-- Launch the training system -->
-    <node pkg="qlearning" name="neuroracer" type="start_qlearning.py" output="screen"/>
+    <node pkg="neuroracer_gym_rl" name="neuroracer_gym_rl" type="start_qlearning.py" output="screen"/>
 </launch>
