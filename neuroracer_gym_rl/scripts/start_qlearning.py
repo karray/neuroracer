@@ -34,7 +34,7 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 4400
+        self.max_buffer         = 15500
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
         self.gamma              = 0.9
