@@ -23,7 +23,7 @@ import rospkg
 
 from neuroracer_gym.tasks import neuroracer_discrete_task
 
-n_frames = 3
+n_frames = 1
 
 class Agent():
     def __init__(self, state_size, action_size, always_explore=False):
@@ -34,7 +34,7 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 6000
+        self.max_buffer         = 4400
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
         self.gamma              = 0.9
@@ -106,11 +106,11 @@ class Agent():
         act_values = self.brain.predict(np.array([np.concatenate(history, axis=2)]))
         return np.argmax(act_values[0])
 
-    def remember(self, history, action, reward, next_history, done):
-        states = np.array([np.concatenate(history, axis=2)])
-        next_states = np.array([np.concatenate(next_history, axis=2)])
+    def remember(self, state, action, reward, next_state, done):
+        # states = np.array([np.concatenate(history, axis=2)])
+        # next_states = np.array([np.concatenate(next_history, axis=2)])
 
-        self.memory.append((states, action, reward, next_states, done))
+        self.memory.append((state, action, reward, next_state, done))
 
     def replay(self, sample_batch_size):
         if len(self.memory) < sample_batch_size:
@@ -165,31 +165,29 @@ class NeuroRacer:
                 episode_time = time.time()
 
                 state = self.env.reset()
-                
-                # for skip in range(100):
-                #     state, _, _, _ = self.env.step(1)
-
-                # state = np.expand_dims(state, axis=0)
+                state = np.expand_dims(state, axis=0)
 
                 done = False
-                cumulated_reward = 0
-                history = deque(maxlen=n_frames)
-                next_history = deque(maxlen=n_frames)
-                for i in range(n_frames):
-                    history.append(state)
-                    next_history.append(state)
+                # history = deque(maxlen=n_frames)
+                # next_history = deque(maxlen=n_frames)
+                # for i in range(n_frames):
+                #     history.append(state)
+                #     next_history.append(state)
                 steps = 0
                 while not done:
                     steps+=1
                     # if index_episode % 50 == 0:
                     #     self.env.render()
-                    action = self.agent.act(history)
+                    action = self.agent.act(state)
 
                     next_state, reward, done, _ = self.env.step(action)
-                    next_history.append(next_state)
-                    self.agent.remember(history, action, reward, next_history, done)
-                    history.append(next_state)
-                    cumulated_reward += reward
+                    next_state = np.expand_dims(next_state, axis=0)
+
+
+                    # next_history.append(next_state)
+                    self.agent.remember(state, action, reward, next_state, done)
+                    # history.append(next_state)
+                    state = next_state
 
                     if save_interval > 256:
                         save_interval = 0
@@ -201,8 +199,8 @@ class NeuroRacer:
                     save_interval+=1
                     
 
-                if self.highest_reward < cumulated_reward:
-                    self.highest_reward = cumulated_reward
+                if self.highest_reward < self.env.cumulated_reward:
+                    self.highest_reward = self.env.cumulated_reward
 
                 rospy.loginfo("Episode {} of {}".format(index_episode, self.episodes))
                 rospy.loginfo("total steps {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
