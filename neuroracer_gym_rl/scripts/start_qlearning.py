@@ -144,6 +144,9 @@ class NeuroRacer:
         self.highest_reward    = -np.inf
 
         self.state_size        = self.env.observation_space.shape
+        rospy.loginfo("State size")
+        rospy.loginfo(self.state_size)
+
         self.action_size       = self.env.action_space.n
         self.agent             = Agent((self.state_size[0], self.state_size[1], self.state_size[2]*n_frames), self.action_size,
                                         always_explore=always_explore)
