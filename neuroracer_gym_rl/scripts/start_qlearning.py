@@ -23,7 +23,7 @@ import rospkg
 
 from neuroracer_gym.tasks import neuroracer_discrete_task
 
-n_frames = 4
+n_frames = 3
 
 class Agent():
     def __init__(self, state_size, action_size, always_explore=False):
@@ -34,7 +34,7 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 8000
+        self.max_buffer         = 6000
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
         self.gamma              = 0.9
@@ -47,24 +47,24 @@ class Agent():
     def _build_model(self):
 
         model = Sequential()
-        model.add(Conv2D(8, kernel_size=(3, 3), strides=(4, 4), input_shape=self.state_size,padding='same'))
+        model.add(Conv2D(16, kernel_size=(3, 3), strides=(4, 4), input_shape=self.state_size,padding='same'))
         model.add(LeakyReLU(alpha=0.1))
         model.add(MaxPooling2D((2, 2),padding='same'))
         model.add(Dropout(0.25))
 
-        model.add(Conv2D(16, (3, 3), strides=(3, 3),padding='same'))
+        model.add(Conv2D(32,kernel_size=(3, 3), strides=(3, 3),padding='same'))
         model.add(LeakyReLU(alpha=0.1))
         model.add(Dropout(0.25))
 
-        model.add(Conv2D(8, (3, 3), strides=(2, 2), padding='same'))
+        model.add(Conv2D(64, kernel_size=(3, 3), strides=(2, 2), padding='same'))
         model.add(LeakyReLU(alpha=0.1))
         model.add(Dropout(0.25))
 
         model.add(Flatten())
 
-        # model.add(Dense(64))
-        # model.add(LeakyReLU(alpha=0.1))      
-        # model.add(Dropout(0.1))
+        model.add(Dense(128))
+        model.add(LeakyReLU(alpha=0.1))      
+        model.add(Dropout(0.25))
 
         model.add(Dense(128))
         model.add(LeakyReLU(alpha=0.1))      
