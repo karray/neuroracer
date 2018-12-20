@@ -13,8 +13,9 @@ import keras
 from keras.models import Sequential,Input,Model
 from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Conv2D, MaxPooling2D
-from keras.layers.normalization import BatchNormalization
+# from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
+from keras.optimizers import Adam
 
 # ROS packages required
 import rospy
@@ -22,7 +23,7 @@ import rospkg
 
 from neuroracer_gym.tasks import neuroracer_discrete_task
 
-n_frames = 8
+n_frames = 4
 
 class Agent():
     def __init__(self, state_size, action_size, always_explore=False):
@@ -33,7 +34,7 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 2000
+        self.max_buffer         = 8000
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
         self.gamma              = 0.9
@@ -48,16 +49,16 @@ class Agent():
         model = Sequential()
         model.add(Conv2D(8, kernel_size=(3, 3), strides=(4, 4), input_shape=self.state_size,padding='same'))
         model.add(LeakyReLU(alpha=0.1))
+        model.add(MaxPooling2D((2, 2),padding='same'))
         model.add(Dropout(0.25))
 
         model.add(Conv2D(16, (3, 3), strides=(3, 3),padding='same'))
         model.add(LeakyReLU(alpha=0.1))
-        # model.add(MaxPooling2D((2, 2),padding='same'))
         model.add(Dropout(0.25))
 
-        # model.add(Conv2D(32, (3, 3), strides=(2, 2), padding='same'))
-        # model.add(LeakyReLU(alpha=0.1))
-        # model.add(Dropout(0.25))
+        model.add(Conv2D(8, (3, 3), strides=(2, 2), padding='same'))
+        model.add(LeakyReLU(alpha=0.1))
+        model.add(Dropout(0.25))
 
         model.add(Flatten())
 
@@ -65,13 +66,13 @@ class Agent():
         # model.add(LeakyReLU(alpha=0.1))      
         # model.add(Dropout(0.1))
 
-        model.add(Dense(32))
+        model.add(Dense(128))
         model.add(LeakyReLU(alpha=0.1))      
         model.add(Dropout(0.1))
 
         model.add(Dense(self.action_size, activation='linear'))
 
-        model.compile(loss='mse', optimizer='adam', metrics=['accuracy'])
+        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate), metrics=['accuracy'])
         model.summary()
         
         if os.path.isfile(self.weight_backup):
@@ -136,7 +137,7 @@ class Agent():
 
 class NeuroRacer:
     def __init__(self, always_explore=False):
-        self.sample_batch_size = 256
+        self.sample_batch_size = 512
         self.episodes          = 50000
         self.env               = gym.make('NeuroRacer-v0')
 
@@ -187,7 +188,7 @@ class NeuroRacer:
                     history.append(next_state)
                     cumulated_reward += reward
 
-                    if save_interval > 512:
+                    if save_interval > 256:
                         save_interval = 0
                         self.agent.replay(self.sample_batch_size)
                         # rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))
