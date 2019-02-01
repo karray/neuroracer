@@ -31,25 +31,38 @@ git clone https://github.com/mit-racecar/racecar-simulator.git
 ```
 
 ### openai_ros ###
+[openai_ros](http://wiki.ros.org/openai_ros) package provides OpenAI Gym environments which allows to compare Reinforcement Learning algorithms by providing a common API.
 ```bash
 git clone https://bitbucket.org/theconstructcore/openai_ros.git
 ```
 
 ### Environment ###
+This project implements openai_ros API for MIT Racear robot.
 ```bash
 git clone https://github.com/karray/neuroracer.git
 ````
 ```bash
 cd ~/catkin_ws
 catkin_make
-source devel/setup.bash 
 ```
 
+The following python packages are required
+```bash
 sudo pip install tensorflow gym keras
+````
 
+
+# Usage #
+After this MIT ROS-package and this project have to be started in their own terminals.
+```bash
+source ~/catkin_ws/devel/setup.bash
 roslaunch racecar_gazebo racecar_tunnel.launch
-roslaunch neuroracer_gym_rl qlearning.launch
+```
 
+```bash
+source ~/catkin_ws/devel/setup.bash 
+roslaunch neuroracer_gym_rl qlearning.launch
+```
 # WSL and headless setup #
 Sometimes headless set up is needed. For example, when there is only ssh access to the server or if the server runs on Windows.
 
