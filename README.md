@@ -39,7 +39,7 @@ git clone https://bitbucket.org/theconstructcore/openai_ros.git
 ```
 
 ### Environment ###
-This project implements openai_ros API for MIT Racear robot.
+This project implements openai_ros API for MIT Racecar robot.
 ```bash
 git clone https://github.com/karray/neuroracer.git
 ````
@@ -85,7 +85,7 @@ Then start the project
 ```
 
 ### Gzweb ###
-Gzweb can be otionally installed
+Gzweb can be optionally installed
 >Gzweb is a WebGL client for Gazebo. Like gzclient, it's a front-end graphical interface to gzserver and provides visualization of the simulation. However, Gzweb is a thin client in comparison, and lets you interact with the simulation from the comfort of a web browser. This means cross-platform support, minimal client-side installation, and support for mobile devices.
 >
 >http://gazebosim.org/gzweb.html
