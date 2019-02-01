@@ -50,8 +50,37 @@ sudo pip install tensorflow gym keras
 roslaunch racecar_gazebo racecar_tunnel.launch
 roslaunch neuroracer_gym_rl qlearning.launch
 
+# WSL and headless setup #
+Sometimes headless set up is needed. For example, when there is only ssh access to the server or if the server runs on Windows.
+
+Headless set up has a couple of special requirements. In order to get the camera rendering a view,  you will need an xserver running. This can be achieved in several ways. The universal solution is Xvfb.
+
+### Xvfb ###
+>Xvfb or X virtual framebuffer is a display server implementing the X11 display server protocol. In contrast to other display servers, Xvfb performs all graphical operations in virtual memory without showing any screen output
+>
+>https://en.wikipedia.org/wiki/Xvfb
+
+First install xvfb
+```bash
+sudo apt install xvfb
+```
+Then start the project
+```bash
+
+```
+
+### Gzweb ###
+Gzweb can be otionally installed
+>Gzweb is a WebGL client for Gazebo. Like gzclient, it's a front-end graphical interface to gzserver and provides visualization of the simulation. However, Gzweb is a thin client in comparison, and lets you interact with the simulation from the comfort of a web browser. This means cross-platform support, minimal client-side installation, and support for mobile devices.
+>
+>http://gazebosim.org/gzweb.html
+
+```bash
+xvfb-run -s "-screen 0 640x480x24" npm run deploy --- -t
+```
+
 # neuroracer_gym
-xvfb-run -s "-screen 0 1280x1024x24" npm run deploy --- -t
+
 
 windows xserver for camera
 
