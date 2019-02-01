@@ -1,5 +1,10 @@
 ![](neuroracer.gif)
 
+
+The goal of this project is to provide an easy-to-use framework that will allow to simulate a training of a self-driving car using OpenAI Gym, ROS and Gazebo. The project is based on openai_ros package. This package implements an architecture that was proposed by The Construct team and that consists of 3 layers: GazeboEnvironment, RobotEnvironment and TaskEnvironment.
+GazeboEnvironment represents the lowest level. It connects Gym API with ROS and should not be overridden.
+RobotEnvironment and TaskEnvironment 
+
 # Software requirements #
 * Ubuntu 18.04 or Windows WSL Ubuntu 18.04
 * Python 2.7
