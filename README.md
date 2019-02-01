@@ -1,3 +1,5 @@
+![](neuroracer.gif)
+
 # Software requirements #
 * Ubuntu 18.04 or Windows WSL Ubuntu 18.04
 * Python 2.7
