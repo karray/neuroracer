@@ -1,4 +1,5 @@
 import time
+import sys
 
 import rospy
 
@@ -6,6 +7,10 @@ from neuroracer_gym import neuroracer_env
 
 from gym import spaces
 from gym.envs.registration import register
+
+import numpy as np
+
+np.set_printoptions(threshold=sys.maxsize)
 
 # timestep_limit_per_episode = 10000 # Can be any Value
 
@@ -37,13 +42,12 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
         self._episode_done = False
 
     def _compute_reward(self, observations, done):
-        reward = -0.01
-
         if not done:
-            if self.last_action == 1:
-                reward = 1
-            elif self.right_left:
-                reward = -1
+            scan = self.get_laser_scan()
+            left_distance = scan[130:140].mean()
+            rigth_distance = scan[950:960].mean()
+            #middle_distance = scan[202:888]
+            reward = 10.0-np.abs(left_distance-rigth_distance)
         else:
             reward = -100
 
