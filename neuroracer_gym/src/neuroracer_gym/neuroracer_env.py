@@ -212,7 +212,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
     #     return self.imu
         
     def get_laser_scan(self):
-        return self.laser_scan
+        return np.array(self.laser_scan.ranges, dtype=np.float32)
     
     def get_camera_image(self):
         try:
