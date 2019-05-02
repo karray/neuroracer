@@ -223,16 +223,24 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         return cv_image
 
     def _is_collided(self):
-        r = np.array(self.laser_scan.ranges, dtype=np.float32)
+        r = self.get_laser_scan()
         crashed = np.any(r <= self.min_distance)
         if crashed:
-            rospy.logdebug('the auto crashed! :(')
-            rospy.logdebug('distance: {}'.format(r.min()))
-            data = np.array(self._get_additional_laser_scan(), dtype=np.float32)
-            data = np.concatenate((np.expand_dims(r, axis=0), data), axis=0)
-            data_mean = np.mean(data, axis=0)
-            rospy.logdebug('meaned distance: {}'.format(data_mean.min()))
+#             rospy.logdebug('the auto crashed! :(')
+#             rospy.logdebug('distance: {}'.format(r.min()))
+#             data = np.array(self._get_additional_laser_scan(), dtype=np.float32)
+#             data = np.concatenate((np.expand_dims(r, axis=0), data), axis=0)
+#             data_mean = np.mean(data, axis=0)
+            min_range_idx = r.argmin()
+            min_idx = min_range_idx - 5
+            if min_idx < 0:
+                min_idx = 0
+            max_idx = min_idx + 10
+            if max_idx >= r.shape[0]:
+                max_idx = r.shape[0] - 1
+                min_idx = max_idx - 10
+            mean_distance = r[min_idx:max_idx].mean()
 
-            crashed = np.any(data_mean <= self.min_distance)
+            crashed = np.any(mean_distance <= self.min_distance)
 
         return crashed
