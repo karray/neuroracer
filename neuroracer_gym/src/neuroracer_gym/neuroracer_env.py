@@ -3,6 +3,9 @@ import time
 import numpy as np
 
 import rospy
+from gazebo_msgs.msg import ModelState 
+from gazebo_msgs.srv import SetModelState
+
 from openai_ros import robot_gazebo_env
 from sensor_msgs.msg import LaserScan, CompressedImage
 from cv_bridge import CvBridge, CvBridgeError
@@ -37,6 +40,13 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
                                             reset_controls=False,
                                             start_init_physics_parameters=False)
 
+        rospy.wait_for_service('/gazebo/set_model_state')
+        try:
+            self.set_model_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+
+
         self.gazebo.unpauseSim()
         time.sleep(default_sleep)
 
@@ -57,9 +67,24 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         
         rospy.logdebug("Finished NeuroRacerEnv INIT...")
 
+    def reset_position(self, p_x=2.5, p_y=3.7, p_z=0.05, o_z=0.51, o_w=0.855):
+        state_msg = ModelState()
+        state_msg.model_name = 'racecar'
+        state_msg.pose.position.x = p_x
+        state_msg.pose.position.y = p_y
+        state_msg.pose.position.z = p_z
+        state_msg.pose.orientation.x = 0
+        state_msg.pose.orientation.y = 0
+        state_msg.pose.orientation.z = o_z
+        state_msg.pose.orientation.w = o_w
+
+        self.set_model_state(state_msg)
+
     def reset(self):
         params = super(NeuroRacerEnv, self).reset()
         self.gazebo.unpauseSim()
+        self.reset_position()
+
         time.sleep(default_sleep)
         self.gazebo.pauseSim()
 
