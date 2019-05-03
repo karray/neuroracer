@@ -40,15 +40,19 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
         self.last_action = 1
 #         self.right_left = False
         self._episode_done = False
+    
+    def _get_distances(self):
+        ranges = self.get_laser_scan()
+        rigth_distance = np.clip(ranges[170:180], None, 10).mean()
+        left_distance = np.clip(ranges[910:920], None, 10).mean()
+        middle_distance = np.clip(ranges[525:555], None, 10).mean()
+        return rigth_distance, left_distance, middle_distance
 
     def _compute_reward(self, observations, done):
         if not done:
-            ranges = self.get_laser_scan()
-            rigth_distance = np.clip(ranges[130:140], None, 10).mean()
-            left_distance = np.clip(ranges[950:960], None, 10).mean()
-            middle_distance = np.clip(ranges[535:555], None, 10).mean()
+            rigth_distance, left_distance, middle_distance = self._get_distances()
 #             print(left_distance, middle_distance, rigth_distance)
-            reward = 3-np.abs(left_distance-rigth_distance) + (middle_distance**2)/10
+            reward = (middle_distance - 3)-np.abs(left_distance-rigth_distance)
             if self.last_action!=1:
                 reward-=0.01
         else:
