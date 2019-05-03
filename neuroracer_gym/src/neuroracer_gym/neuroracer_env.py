@@ -24,6 +24,9 @@ default_sleep = 1
 
 class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
     def __init__(self):
+        
+        self.initial_position = None
+        
         self.min_distance = .255
 
         self.bridge = CvBridge()
@@ -67,16 +70,18 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         
         rospy.logdebug("Finished NeuroRacerEnv INIT...")
 
-    def reset_position(self, p_x=2.5, p_y=3.7, p_z=0.05, o_z=0.51, o_w=0.855):
+    def reset_position(self):
+        if not self.initial_position:
+            return
         state_msg = ModelState()
         state_msg.model_name = 'racecar'
-        state_msg.pose.position.x = p_x
-        state_msg.pose.position.y = p_y
-        state_msg.pose.position.z = p_z
-        state_msg.pose.orientation.x = 0
-        state_msg.pose.orientation.y = 0
-        state_msg.pose.orientation.z = o_z
-        state_msg.pose.orientation.w = o_w
+        state_msg.pose.position.x = self.initial_position['p_x']
+        state_msg.pose.position.y = self.initial_position['p_y']
+        state_msg.pose.position.z = self.initial_position['p_z']
+        state_msg.pose.orientation.x = self.initial_position['o_x']
+        state_msg.pose.orientation.y = self.initial_position['o_y']
+        state_msg.pose.orientation.z = self.initial_position['o_z']
+        state_msg.pose.orientation.w = self.initial_position['o_w']
 
         self.set_model_state(state_msg)
 
@@ -149,19 +154,19 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
                 rospy.logerr("Current /scan not ready yet, retrying for getting laser_scan")
         return self.laser_scan
 
-    def _get_additional_laser_scan(self):
-        laser_scans = []
-        self.gazebo.unpauseSim()
-        while len(laser_scans) < 2  and not rospy.is_shutdown():
-            try:
-                data = rospy.wait_for_message("/scan", LaserScan, timeout=1.0)
-                laser_scans.append(data.ranges)
-            except Exception as e:
-                rospy.logerr("getting laser data...")
-                print(e)
-        self.gazebo.pauseSim()
+#     def _get_additional_laser_scan(self):
+#         laser_scans = []
+#         self.gazebo.unpauseSim()
+#         while len(laser_scans) < 2  and not rospy.is_shutdown():
+#             try:
+#                 data = rospy.wait_for_message("/scan", LaserScan, timeout=1.0)
+#                 laser_scans.append(data.ranges)
+#             except Exception as e:
+#                 rospy.logerr("getting laser data...")
+#                 print(e)
+#         self.gazebo.pauseSim()
 
-        return laser_scans
+#         return laser_scans
 
     def _laser_scan_callback(self, data):
         self.laser_scan = data

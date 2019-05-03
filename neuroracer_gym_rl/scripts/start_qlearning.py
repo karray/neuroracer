@@ -37,7 +37,7 @@ class Agent():
         self.max_buffer         = 15500
         self.memory             = deque(maxlen=self.max_buffer)
         self.learning_rate      = 0.001
-        self.gamma              = 0.9
+        self.gamma              = 0.999
         self.exploration_rate   = 0.85
         self.exploration_min    = 0.01
         self.exploration_decay  = 0.995
@@ -137,7 +137,7 @@ class Agent():
 
 class NeuroRacer:
     def __init__(self, always_explore=False):
-        self.sample_batch_size = 512
+        self.sample_batch_size = 12000
         self.episodes          = 50000
         self.env               = gym.make('NeuroRacer-v0')
 
@@ -192,7 +192,7 @@ class NeuroRacer:
                     
                     cumulated_reward += reward
 
-                    if save_interval > 256:
+                    if save_interval > 3000:
                         save_interval = 0
                         self.agent.replay(self.sample_batch_size)
                         # rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))

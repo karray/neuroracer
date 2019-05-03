@@ -38,16 +38,19 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
     def _init_env_variables(self):
         self.cumulated_reward = 0.0
         self.last_action = 1
-        self.right_left = False
+#         self.right_left = False
         self._episode_done = False
 
     def _compute_reward(self, observations, done):
         if not done:
-            scan = self.get_laser_scan()
-            left_distance = scan[130:140].mean()
-            rigth_distance = scan[950:960].mean()
-            #middle_distance = scan[202:888]
-            reward = 10.0-np.abs(left_distance-rigth_distance)
+            ranges = self.get_laser_scan()
+            rigth_distance = np.clip(ranges[130:140], None, 10).mean()
+            left_distance = np.clip(ranges[950:960], None, 10).mean()
+            middle_distance = np.clip(ranges[535:555], None, 10).mean()
+#             print(left_distance, middle_distance, rigth_distance)
+            reward = 3-np.abs(left_distance-rigth_distance) + (middle_distance**2)/10
+            if self.last_action!=1:
+                reward-=0.01
         else:
             reward = -100
 
@@ -59,12 +62,13 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
 
     def _set_action(self, action):
         steering_angle = 0
-        if action == 0:
-            steering_angle = -0.7
-        if action == 2:
-            steering_angle = 0.7
 
-        self.right_left =  action != 1 & self.last_action != 1 & self.last_action != action
+        if action == 0: # right
+            steering_angle = -1
+        if action == 2: # left
+            steering_angle = 1
+
+#         self.right_left =  action != 1 & self.last_action != 1 & self.last_action != action
 
         self.last_action = action
         self.steering(steering_angle, speed=6)
