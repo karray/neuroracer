@@ -86,14 +86,14 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
         self.set_model_state(state_msg)
 
     def reset(self):
-        params = super(NeuroRacerEnv, self).reset()
+        super(NeuroRacerEnv, self).reset()
         self.gazebo.unpauseSim()
         self.reset_position()
 
         time.sleep(default_sleep)
         self.gazebo.pauseSim()
 
-        return params
+        return self._get_obs()
 
     def _check_all_systems_ready(self):
         """
@@ -246,7 +246,7 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
     
     def get_camera_image(self):
         try:
-            cv_image = self.bridge.compressed_imgmsg_to_cv2(self.camera_msg).astype('float32')/255.0
+            cv_image = self.bridge.compressed_imgmsg_to_cv2(self.camera_msg).astype('float32')
         except Exception as e:
             rospy.logerr("CvBridgeError: Error converting image")
             rospy.logerr(e)
