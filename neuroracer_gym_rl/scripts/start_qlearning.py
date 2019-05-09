@@ -6,8 +6,9 @@ import random
 import os
 
 import numpy as np
-
 import gym
+import cv2
+from sklearn.utils import shuffle
 
 import keras
 from keras.models import Sequential,Input,Model
@@ -23,8 +24,38 @@ import rospkg
 
 from neuroracer_gym.tasks import neuroracer_discrete_task
 
-n_frames = 1
-
+class Memory():
+    def __init__(self, maxlen=None):
+        self.action = deque(maxlen=maxlen)
+        self.state = deque(maxlen=maxlen)
+        self.next_state = deque(maxlen=maxlen)
+        self.reward = deque(maxlen=maxlen)
+        self.terminate = deque(maxlen=maxlen)
+    
+    def append(self, action, state, next_state, reward, terminate):
+        self.action.append(action)
+        self.state.append(state)
+        self.next_state.append(next_state)
+        self.reward.append(reward)
+        self.terminate.append(terminate)
+        
+    def sample(self, n_samples=None):
+        if not n_samples or len(self.action) <= n_samples:
+            return np.array(self.action, dtype=np.int), np.array(self.state, dtype=np.float32), np.array(self.next_state, dtype=np.float32), np.array(self.reward, dtype=np.float32), np.array(self.terminate, dtype=np.bool) 
+        
+        action, state, next_state, reward, terminate = shuffle(self.action, self.state, self.next_state, self.reward, self.terminate, n_samples=n_samples)
+        return np.array(action, dtype=np.int), np.array(state, dtype=np.float32), np.array(next_state, dtype=np.float32), np.array(reward, dtype=np.float32), np.array(terminate, dtype=np.bool) 
+    
+    def length(self):
+        return len(self.action)
+    
+    def extend(self, obj):
+        self.action.extend(obj.action)
+        self.state.extend(obj.state)
+        self.next_state.extend(obj.next_state)
+        self.reward.extend(obj.reward)
+        self.terminate.extend(obj.terminate)
+        
 class Agent():
     def __init__(self, state_size, action_size, always_explore=False):
         rospack = rospkg.RosPack()
@@ -34,25 +65,25 @@ class Agent():
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.max_buffer         = 15500
-        self.memory             = deque(maxlen=self.max_buffer)
+        self.max_buffer         = 30000
+        self.memory             = Memory(self.max_buffer)
         self.learning_rate      = 0.001
-        self.gamma              = 0.999
+        self.gamma              = 0.99
         self.exploration_rate   = 0.85
         self.exploration_min    = 0.01
-        self.exploration_decay  = 0.995
+        self.exploration_decay  = 0.99
         self.brain              = self._build_model()
 
 
     def _build_model(self):
 
         model = Sequential()
-        model.add(Conv2D(16, kernel_size=(3, 3), strides=(4, 4), input_shape=self.state_size,padding='same'))
+        model.add(Conv2D(16, kernel_size=(3, 3), strides=(1, 1), input_shape=self.state_size,padding='same'))
         model.add(LeakyReLU(alpha=0.1))
         model.add(MaxPooling2D((2, 2),padding='same'))
         model.add(Dropout(0.25))
 
-        model.add(Conv2D(32,kernel_size=(3, 3), strides=(3, 3),padding='same'))
+        model.add(Conv2D(32,kernel_size=(3, 3), strides=(1, 1),padding='same'))
         model.add(LeakyReLU(alpha=0.1))
         model.add(Dropout(0.25))
 
@@ -62,7 +93,7 @@ class Agent():
 
         model.add(Flatten())
 
-        model.add(Dense(128))
+        model.add(Dense(256))
         model.add(LeakyReLU(alpha=0.1))      
         model.add(Dropout(0.25))
 
@@ -88,46 +119,72 @@ class Agent():
     # def downsample(self, img):
     #     return img[::2, ::2]
     
-#     def preprocess(self,img):
-#         arr = np.array(img)
-#         arr = self.downsample(np.true_divide(arr,[255.0],out=None))
-# #         plt.imshow(self.downsample(arr))
-# #         plt.show()
-#         self.input_shape = arr.shape
-#         return arr
+
 
     def save_model(self):
         rospy.loginfo("Model saved"), 
         self.brain.save(self.weight_backup)
 
-    def act(self, history):
+    def act(self, state):
         if np.random.rand() <= self.exploration_rate:
             return random.randrange(self.action_size)
-        act_values = self.brain.predict(np.array([np.concatenate(history, axis=2)]))
+        act_values = self.brain.predict(state)
         return np.argmax(act_values[0])
+        
+    def flip(self, actions, states, next_states, rewards, not_done):
+        actions_flipped = 2-actions
+        states_flipped = np.flip(states, axis=2)
+        next_states_flipped = np.flip(next_states, axis=2)
+        rewards_flipped = np.copy(rewards)
+        
+        next_pred_flipped = self.brain.predict(next_states_flipped[not_done]).max(axis=1)
+        rewards_flipped[not_done]+= self.gamma * next_pred_flipped
+        targets_flipped = self.brain.predict(states_flipped)
+        targets_flipped[np.arange(len(actions_flipped)), actions_flipped] = rewards_flipped
+        
+        return states_flipped, targets_flipped
 
-    def remember(self, state, action, reward, next_state, done):
-        # states = np.array([np.concatenate(history, axis=2)])
-        # next_states = np.array([np.concatenate(next_history, axis=2)])
-
-        self.memory.append((state, action, reward, next_state, done))
-
-    def replay(self, sample_batch_size):
-        if len(self.memory) < sample_batch_size:
-            return
+    def replay(self, new_data, add_flipped=True):
+#         if self.memory.length() < sample_batch_size:
+#             return
 
         rospy.loginfo("Replaying..."), 
 
-        sample_batch = random.sample(self.memory, sample_batch_size)
-        for state, action, reward, next_state, done in sample_batch:
-            target = reward
-            if not done:
-                target = reward + self.gamma * np.amax(self.brain.predict(next_state)[0])
-            if not target:
-                rospy.logerr("target is null: " + str(target))
-            target_f = self.brain.predict(state)
-            target_f[0][action] = target
-            self.brain.fit(state, target_f, epochs=1, verbose=0)
+        actions, states, next_states, rewards, terminates = new_data.sample()
+        if self.memory.length() > 0:
+            actions_old, states_old, next_states_old, rewards_old, terminates_old = self.memory.sample(new_data.length()*5)
+            actions = np.concatenate((actions, actions_old))
+            states = np.concatenate((states, states_old))
+            next_states = np.concatenate((next_states, next_states_old))
+            rewards = np.concatenate((rewards, rewards_old))
+            terminates = np.concatenate((terminates, terminates_old))
+        
+        self.memory.extend(new_data)
+
+        not_done = np.invert(terminates)
+        rewards_new = np.copy(rewards)
+
+        next_pred = self.brain.predict(next_states[not_done]).max(axis=1)
+        rewards_new[not_done]+= self.gamma * next_pred
+        targets = self.brain.predict(states)
+        targets[np.arange(len(actions)), actions] = rewards_new
+        
+        if add_flipped:
+            states_flipped, targets_flipped = self.flip(actions, states, next_states, rewards, not_done)
+            states = np.concatenate((states,states_flipped))
+            targets = np.concatenate((targets,targets_flipped))
+        
+        self.brain.fit(states, targets, shuffle=True, batch_size=256, epochs=1, verbose=0)
+
+#         for state, action, reward, next_state, done in sample_batch:
+#             target = reward
+#             if not done:
+#                 target = reward + self.gamma * np.amax(self.brain.predict(next_state)[0])
+#             if not target:
+#                 rospy.logerr("target is null: " + str(target))
+#             target_f = self.brain.predict(state)
+#             target_f[0][action] = target
+#             self.brain.fit(states, targets, epochs=1, verbose=0)
 
         
         if self.exploration_rate > self.exploration_min:
@@ -137,64 +194,88 @@ class Agent():
 
 class NeuroRacer:
     def __init__(self, always_explore=False):
-        self.sample_batch_size = 12000
-        self.episodes          = 50000
+        self.sample_batch_size = 5000
+        self.episodes          = 100000
         self.env               = gym.make('NeuroRacer-v0')
 
         self.highest_reward    = -np.inf
+        
+        self.n_frames = 4
 
-        self.state_size        = self.env.observation_space.shape
+        self.img_y_offset = 200
+        self.img_y_scale = 0.2
+        self.img_x_scale = 0.2
+
+        state_size = self.env.observation_space.shape
+        self.state_size        = (int((state_size[0]-self.img_y_offset)*self.img_y_scale), int(state_size[1]*self.img_x_scale), 1)
         rospy.loginfo("State size")
         rospy.loginfo(self.state_size)
 
         self.action_size       = self.env.action_space.n
-        self.agent             = Agent((self.state_size[0], self.state_size[1], self.state_size[2]*n_frames), self.action_size,
-                                        always_explore=always_explore)
+        self.agent             = Agent((self.state_size[0], self.state_size[1], self.state_size[2]*self.n_frames), self.action_size, always_explore=always_explore)
 
+        
     def format_time(self, t):
         m, s = divmod(int(time.time() - t), 60)
         h, m = divmod(m, 60)
         return "%d:%02d:%02d" % (h, m, s)
-
+    
+    def preprocess(self,img):
+        return cv2.resize(cv2.cvtColor(img[self.img_y_offset:,:], cv2.COLOR_RGB2GRAY), None, fx=self.img_x_scale, fy=self.img_y_scale, interpolation=cv2.INTER_LINEAR)/255.0
+    
     def run(self):
         try:
             total_time = time.time()
             save_interval = 0
+            
+            memory = Memory()
 
             for index_episode in range(self.episodes):
                 episode_time = time.time()
 
+                self.env.initial_position = {'p_x': np.random.uniform(1,4), 'p_y': 3.7, 'p_z': 0.05, 'o_x': 0, 'o_y': 0.0, 'o_z': np.random.uniform(0.4,1), 'o_w': 0.855}
                 state = self.env.reset()
-                state = np.expand_dims(state, axis=0)
+                state = self.preprocess(state)
+#                 state = np.expand_dims(state, axis=0)
 
                 done = False
                 cumulated_reward = 0
-                # history = deque(maxlen=n_frames)
-                # next_history = deque(maxlen=n_frames)
-                # for i in range(n_frames):
-                #     history.append(state)
-                #     next_history.append(state)
+                
+                stacked_states = deque(maxlen=self.n_frames)
+                stacked_next_states = deque(maxlen=self.n_frames)
+                for i in range(self.n_frames):
+                    stacked_states.append(state)
+                    stacked_next_states.append(state)
+                
                 steps = 0
                 while not done:
                     steps+=1
                     # if index_episode % 50 == 0:
                     #     self.env.render()
-                    action = self.agent.act(state)
+                    
+                    action = self.agent.act(np.expand_dims(np.stack(stacked_states, axis=2), axis=0))
+#                     action = self.agent.act(state)
+
 
                     next_state, reward, done, _ = self.env.step(action)
-                    next_state = np.expand_dims(next_state, axis=0)
+                    next_state = self.preprocess(next_state)
+#                     next_state = np.expand_dims(next_state, axis=0)
+                    stacked_next_states.append(next_state)
 
-
-                    # next_history.append(next_state)
-                    self.agent.remember(state, action, reward, next_state, done)
-                    # history.append(next_state)
-                    state = next_state
+                    memory.append(action,np.stack(stacked_states, axis=2), np.stack(stacked_next_states, axis=2), reward, done)        
+#                     self.agent.remember(history, action, reward, next_history, done)
+                    stacked_states.append(next_state)
+#                     self.agent.remember(state, action, reward, next_state, done)
+#                     state = next_state
                     
                     cumulated_reward += reward
 
-                    if save_interval > 3000:
+                    if save_interval >= self.sample_batch_size:
                         save_interval = 0
-                        self.agent.replay(self.sample_batch_size)
+                        replay_time = time.time()
+                        self.agent.replay(memory)
+                        rospy.loginfo("Replay time {}".format(time.time()-replay_time))
+                        memory = Memory()
                         # rospy.loginfo("Episode {} of {}. In-episode training".format(index_episode, self.episodes))
                         # rospy.loginfo("Step {}, reward {}/{}".format(steps, cumulated_reward, self.highest_reward))
                         # rospy.loginfo("Episode time {}, total {}".format(self.format_time(episode_time), 
