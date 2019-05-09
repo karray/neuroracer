@@ -28,8 +28,18 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
         self.last_action = 1
         self.right_left = False
         self.action_space = spaces.Discrete(3)
+        self.rate = None
+        self.speed = 1
+        self.set_sleep_rate(100)
+        self.number_of_sleeps = 10
+
 
         super(NeuroRacerDiscreteTask, self).__init__()
+        
+    def set_sleep_rate(self, hz):
+        self.rate = None
+        if hz > 0:
+            self.rate = rospy.Rate(hz)
 
     def _set_init_pose(self):
         self.steering(0, speed=0)
@@ -43,8 +53,8 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
     
     def _get_distances(self):
         ranges = self.get_laser_scan()
-        rigth_distance = np.clip(ranges[170:180], None, 10).mean()
-        left_distance = np.clip(ranges[910:920], None, 10).mean()
+        rigth_distance = np.clip(ranges[175:185], None, 10).mean()
+        left_distance = np.clip(ranges[895:905], None, 10).mean()
         middle_distance = np.clip(ranges[525:555], None, 10).mean()
         return rigth_distance, left_distance, middle_distance
 
@@ -53,8 +63,8 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
             rigth_distance, left_distance, middle_distance = self._get_distances()
 #             print(left_distance, middle_distance, rigth_distance)
             reward = (middle_distance - 3)-np.abs(left_distance-rigth_distance)
-            if self.last_action!=1:
-                reward-=0.01
+#             if self.last_action!=1:
+#                 reward-=0.001
         else:
             reward = -100
 
@@ -75,5 +85,8 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
 #         self.right_left =  action != 1 & self.last_action != 1 & self.last_action != action
 
         self.last_action = action
-        self.steering(steering_angle, speed=6)
-
+        self.steering(steering_angle, self.speed)
+        if self.rate:
+            for i in range(int(self.number_of_sleeps)):
+                self.rate.sleep()
+                self.steering(steering_angle, self.speed)
