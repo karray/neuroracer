@@ -1,3 +1,5 @@
+#!/bin/bash
+
 HOME=/home
 
 CATKIN_HOME=$HOME/catkin_ws
@@ -6,8 +8,10 @@ CATKIN_SRC=$CATKIN_HOME/src
 mkdir -p $CATKIN_SRC
 
 apt-get update && \
-    apt-get install -y git sb-release lsb-core curl wget xvfb \
+    apt-get install -yq git lsb-core curl wget xvfb \
     python-pip python-dev #libgtk2.0-0 unzip libblas-dev liblapack-dev libhdf5-dev
+
+# apt-get install -yq sb-release
 
 curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
 python get-pip.py
@@ -21,7 +25,10 @@ python get-pip.py
 # echo "source /opt/ros/melodic/setup.bash" >> ~/.bashrc
 # source /opt/ros/melodic/setup.bash
 
-apt-get install -y ros-melodic-ackermann-msgs ros-melodic-effort-controllers os-melodic-joy ros-melodic-tf2-sensor-msgs
+# Setup ros env
+# /ros_entrypoint.sh
+
+apt-get install -yq ros-melodic-ackermann-msgs ros-melodic-effort-controllers ros-melodic-joy ros-melodic-tf2-sensor-msgs
 
 cd $CATKIN_SRC
 git clone https://github.com/mit-racecar/racecar.git
@@ -32,7 +39,7 @@ git clone https://bitbucket.org/theconstructcore/openai_ros.git
 git clone https://github.com/karray/neuroracer.git
 
 cd $CATKIN_HOME
-catkin_make
+source "/opt/ros/melodic/setup.bash" && catkin_make
 
 # Gazebo Web
 apt-get install -y libjansson-dev mercurial libboost-dev imagemagick libtinyxml-dev cmake build-essential
@@ -41,15 +48,16 @@ curl -sL https://deb.nodesource.com/setup_10.x | bash -
 apt-get install -y nodejs && npm install -g npm
 
 cd $HOME
-git clone https://bitbucket.org/osrf/gzweb
+hg clone https://bitbucket.org/osrf/gzweb
 cd gzweb
-git checkout default
+hg up default
 
-source /usr/share/gazebo/setup.sh
+source "/usr/share/gazebo/setup.sh"
 
-xvfb-run -s "-screen 0 640x480x24" npm run ./deploy.sh -m local -t
+# xvfb-run -s "-screen 0 640x480x24" ./deploy.sh -m local -t
+./deploy.sh -m local -t
 
 # Python libs
-pip install numpy scipy matplotlib scikit-learn cv2 gym keras
+# pip install numpy scipy matplotlib scikit-learn cv2 gym keras
 
-pip install tensorflow-gpu
+# pip install tensorflow-gpu

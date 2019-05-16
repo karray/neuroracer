@@ -29,8 +29,12 @@ ENV NVIDIA_DRIVER_CAPABILITIES \
 # RUN curl -sL https://deb.nodesource.com/setup_10.x | bash -
 # RUN apt-get install -y nodejs && npm install -g npm
 
-# WORKDIR /
-# COPY setup.sh start.sh ./
+WORKDIR /home
+COPY setup.sh start.sh ./
+RUN ["chmod", "+x", "setup.sh"]
+RUN ["chmod", "+x", "start.sh"]
+RUN ./setup.sh
+
 # RUN hg clone https://bitbucket.org/osrf/gzweb
 # WORKDIR /gzweb
 # RUN hg up gzweb_2.0.0
@@ -49,4 +53,4 @@ EXPOSE 8080
 # Expose Tensorboard
 # EXPOSE 6006
 
-# CMD start.sh
+CMD ./start.sh
