@@ -3,6 +3,7 @@ overlay/*
 
 *.pyc
 *.h5
+*.hdf5
 
 .vscode/*
 !.vscode/settings.json
