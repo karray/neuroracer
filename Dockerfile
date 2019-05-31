@@ -1,4 +1,4 @@
-FROM nvidia/cudagl:10.1-devel-ubuntu18.04
+FROM nvidia/cudagl:10.0-devel-ubuntu18.04
 
 # FROM osrf/ros:melodic-desktop-full
 
