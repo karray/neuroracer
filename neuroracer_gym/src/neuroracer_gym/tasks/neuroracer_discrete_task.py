@@ -26,7 +26,7 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
     def __init__(self):
         self.cumulated_steps = 0.0
         self.last_action = 1
-        self.right_left = False
+        self.right_left = 0
         self.action_space = spaces.Discrete(3)
         self.rate = None
         self.speed = 1
@@ -64,7 +64,7 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
 #             print(left_distance, middle_distance, rigth_distance)
             reward = (middle_distance - 3)-np.abs(left_distance-rigth_distance)
 #             if self.last_action!=1:
-#                 reward-=0.001
+#                 reward-=0.001*(1.7**self.right_left - 1)
         else:
             reward = -100
 
@@ -81,6 +81,11 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
             steering_angle = -1
         if action == 2: # left
             steering_angle = 1
+            
+        if action == 1:
+            self.right_left = 0
+        else:
+            self.right_left+=1
 
 #         self.right_left =  action != 1 & self.last_action != 1 & self.last_action != action
 

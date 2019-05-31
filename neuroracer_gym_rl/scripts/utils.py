@@ -1,7 +1,11 @@
-import cv2
-from sklearn.utils import shuffle
+#!/usr/bin/env python
 
-def preprocess(img,y_offset, x_scale, y_scale, interpolation=cv2.INTER_LINEAR):
+import cv2
+import numpy as np
+from sklearn.utils import shuffle
+from collections import deque
+
+def preprocess(img, y_offset, x_scale, y_scale, interpolation=cv2.INTER_LINEAR):
     return cv2.resize(cv2.cvtColor(img[y_offset:,:], cv2.COLOR_RGB2GRAY), None, fx=x_scale, fy=y_scale, interpolation=interpolation)/255.0
 
 class Memory():
