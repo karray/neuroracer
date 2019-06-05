@@ -7,6 +7,8 @@ CATKIN_SRC=$CATKIN_HOME/src
 
 mkdir -p $CATKIN_SRC
 
+echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+
 # export DEBIAN_FRONTEND="noninteractive"
 
 # apt-get update && apt-get install -yq --no-install-recommends apt-utils
@@ -17,7 +19,7 @@ apt-get update && apt-get install --no-install-recommends -yq git lsb-core curl 
     #libgtk2.0-0 unzip libblas-dev liblapack-dev libhdf5-dev
 
 sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
-apt-key adv --keyserver hkp://ha.pool.sks-keyservers.net:80 --recv-key 421C365BD9FF1F717815A3895523BAEEB01FA116
+apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key 421C365BD9FF1F717815A3895523BAEEB01FA116
 
 apt-get update
 
@@ -70,4 +72,6 @@ python get-pip.py
 
 pip install numpy scipy matplotlib scikit-learn opencv-python gym keras
 
-pip install tensorflow-gpu
+pip install jupyterlab
+
+pip install tensorflow-gpu==1.13.1
