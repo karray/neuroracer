@@ -9,7 +9,7 @@ source "$CATKIN_HOME/devel/setup.bash"
 nohup xvfb-run -s "-screen 0 640x480x24" roslaunch racecar_gazebo racecar_tunnel.launch &
 
 cd $CATKIN_HOME/src/neuroracer
-nohup jupyter lab --no-browser --LabApp.token='' --port 8888 &
+nohup jupyter lab --port 8888 --ip=0.0.0.0 --allow-root --no-browser --LabApp.token=''  &
 
 cd $GZWEB_HOME
-sleep 5 ; echo 'Strarting gzweb'; npm start
+sleep 10; echo 'Strarting gzweb'; npm start

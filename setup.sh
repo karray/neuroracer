@@ -13,9 +13,10 @@ echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
 
 # apt-get update && apt-get install -yq --no-install-recommends apt-utils
 
-apt-get update && apt-get install --no-install-recommends -yq git lsb-core curl wget xvfb \
+apt-get update; apt-get install --no-install-recommends -yq \
+    git lsb-core curl wget xvfb \
     python-pip python-dev \
-    dirmngr gnupg2 lsb-release
+    dirmngr gnupg2 lsb-release python-setuptools
     #libgtk2.0-0 unzip libblas-dev liblapack-dev libhdf5-dev
 
 sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
@@ -67,8 +68,8 @@ source "/usr/share/gazebo/setup.sh"
 ./deploy.sh -m local -t
 
 # Python libs
-curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-python get-pip.py
+# curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+# python get-pip.py
 
 pip install numpy scipy matplotlib scikit-learn opencv-python gym keras
 
