@@ -14,7 +14,12 @@ if __name__ == '__main__':
     module = __import__(agent_name)
     agent_class = getattr(module, 'Agent')
 
-    game = NeuroRacer(agent_class, 1000)
+    game = NeuroRacer(agent_class, \
+                      sample_batch_size=1000, \
+                      n_frames=8, \
+                      buffer_max_size=100000, \
+                      chunk_size=10000, \
+                      add_flipped=True)
     rospy.logwarn("Gym environment done. always_explore = " + str(always_explore))
     rospy.logwarn("Agent is " + agent_name)
 
