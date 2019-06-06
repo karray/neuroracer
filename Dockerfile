@@ -1,6 +1,6 @@
-# FROM nvidia/cudagl:10.0-devel-ubuntu18.04
+FROM nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04
 
-FROM osrf/ros:melodic-desktop-full-bionic
+# FROM osrf/ros:melodic-desktop-full
 
 # SHELL ["/bin/bash", "-c"]
 
@@ -10,6 +10,8 @@ ENV NVIDIA_VISIBLE_DEVICES \
 ENV NVIDIA_DRIVER_CAPABILITIES \
     ${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics
 
+# RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+# RUN mkdir ~/.gnupg && echo "disable-ipv6" >> ~/.gnupg/dirmngr.conf
 # ENV DEBIAN_FRONTEND=noninteractive
 
 # RUN apt-get update && apt-get install -y --no-install-recommends apt-utils
@@ -45,12 +47,12 @@ RUN ./setup.sh
 # RUN setup.sh
 
 # Expose Jupyter 
-# EXPOSE 8888
+EXPOSE 8888
 
 # Expose Gazebo web 
 EXPOSE 8080
 
 # Expose Tensorboard
-# EXPOSE 6006
+EXPOSE 6006
 
 CMD ./start.sh
