@@ -16,7 +16,7 @@ source "/usr/share/gazebo/setup.sh"
 
 # The first time you build, you'll need to gather all the Gazebo models which you want to simulate in the right directory ('http/client/assets') and prepare them for the web.
 source /usr/share/gazebo/setup.sh
-export GAZEBO_MODEL_PATH=$MODEL_PATH:$GAZEBO_MODEL_PATH
+# export GAZEBO_MODEL_PATH=$MODEL_PATH:$GAZEBO_MODEL_PATH
 mkdir -p /home/gzweb/http/client/assets/
 cp -rf /home/catkin_ws/src/racecar-simulator/racecar_description/ /home/gzweb/http/client/assets/
 
