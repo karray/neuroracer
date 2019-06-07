@@ -1,0 +1,9 @@
+numpy
+scipy
+matplotlib
+scikit-learn
+opencv-python
+gym
+keras
+jupyterlab
+tensorflow-gpu==1.13.1
