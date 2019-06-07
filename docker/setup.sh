@@ -17,6 +17,6 @@ apt-get install -yq --no-install-recommends nodejs && npm install -g npm
 
 ./install_gzweb.sh $HOME
 
-pip install -r requirements.txt
+pip install --no-cache-dir -r requirements.txt
 
 rm -rf /var/lib/apt/lists/*
