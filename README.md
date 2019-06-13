@@ -9,7 +9,7 @@ The goal of this project is to provide an easy-to-use framework that will allow 
 * Tensorflow CPU or GPU
 
 # Installation #
-The whole setup can be found in [setup.sh](docker/setup.sh) which is used to setup docker [goto docker section](#Docker) which is the simplest way to launch the simulation.
+The whole setup can be found in [setup.sh](docker/setup.sh) which is used to setup docker ([goto docker section](#Docker)) which is the simplest way to launch the simulation.
 
 ### ROS Melodic ###
 Official instructions can be found [here](http://wiki.ros.org/melodic/Installation/Ubuntu)
