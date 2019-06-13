@@ -14,7 +14,7 @@ The whole setup can be found in [setup.sh](docker/setup.sh) which is used to set
 ### ROS Melodic ###
 Official instructions can be found [here](http://wiki.ros.org/melodic/Installation/Ubuntu)
 ```bash
-docker/install_ros.sh
+./docker/install_ros.sh
 ```
 [install_ros.sh](docker/install_ros.sh)
 
@@ -22,7 +22,7 @@ docker/install_ros.sh
 ### Catkin workspace ###
 Creating `catkin_ws` directory, cloning and building all projects:
 ```bash
-docker/clone_build.sh <path/to/home_dir>
+./docker/clone_build.sh <path/to/home_dir>
 ```
 [clone_build.sh](docker/clone_build.sh)
 
@@ -70,7 +70,7 @@ sudo apt install xvfb
 >[Gzweb](http://gazebosim.org/gzweb.html)
 
 ```bash
-docker/install_gzweb.sh path/to/home_dir
+./docker/install_gzweb.sh path/to/home_dir
 ```
 [install_gzweb.sh](docker/install_gzweb.sh)
 
