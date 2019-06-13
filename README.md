@@ -9,32 +9,32 @@ The goal of this project is to provide an easy-to-use framework that will allow 
 * Tensorflow CPU or GPU
 
 # Installation #
-The whole setup can be found in [setup.sh](Docker/setup.sh) which is used to setup [docker](#Docker)
+The whole setup can be found in [setup.sh](docker/setup.sh) which is used to setup docker [goto docker section](#Docker) which is the simplest way to launch the simulation.
 
 ### ROS Melodic ###
 Official instructions can be found [here](http://wiki.ros.org/melodic/Installation/Ubuntu)
 ```bash
-Docker/install_ros.sh
+docker/install_ros.sh
 ```
-[install_ros.sh](Docker/install_ros.sh)
+[install_ros.sh](docker/install_ros.sh)
 
 
 ### Catkin workspace ###
-Create `catkin_ws` directory, clone and build all projects
+Creating `catkin_ws` directory, cloning and building all projects:
 ```bash
-Docker/clone_build.sh <path/to/home_dir>
+docker/clone_build.sh <path/to/home_dir>
 ```
-[clone_build.sh](Docker/clone_build.sh)
+[clone_build.sh](docker/clone_build.sh)
 
 
 ### Python packages ###
 ```bash
-pip install -U -r Docker/requirements.txt
+pip install -U -r docker/requirements.txt
 ````
-[requirements.txt](Docker/requirements.txt)
+[requirements.txt](docker/requirements.txt)
 
 
-# Usage #
+# Start training #
 Start MIT racecar simulation in its own terminal:
 ```bash
 source ~/<catkin_ws>/devel/setup.bash
@@ -70,23 +70,22 @@ sudo apt install xvfb
 >[Gzweb](http://gazebosim.org/gzweb.html)
 
 ```bash
-Docker/install_gzweb.sh path/to/home_dir
+docker/install_gzweb.sh path/to/home_dir
 ```
-[install_gzweb.sh](Docker/install_gzweb.sh)
+[install_gzweb.sh](docker/install_gzweb.sh)
 
 
 # Docker #
-The simplest way is to use docker.
-
-Just pull the image
+Just pull the image:
 ```bash
-docker pull karay/neuroracer:
+docker pull karay/neuroracer
 ```
+
 and run it with following params:
 ```bash
 docker run -d --runtime=nvidia -p 8080:8080 -p 8888:8888 karay/neuroracer
 ```
-Where `http://localhost:8080` is Gazebo Web and `http://localhost:8888` is Jupyter Lab
+Where `http://localhost:8080` is Gazebo Web and `http://localhost:8888` is Jupyter Lab.
 
 Note: This image is setup for CUDA 10 and Tensorflow GPU. So `docker-ce` and [nvidia-docker2](https://github.com/nvidia/nvidia-docker/wiki/Installation-(version-2.0)) are required.
 
