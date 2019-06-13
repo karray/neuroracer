@@ -16,10 +16,10 @@ if __name__ == '__main__':
 
     game = NeuroRacer(agent_class, \
                       sample_batch_size=1000, \
-                      n_frames=8, \
+                      n_frames=16, \
                       buffer_max_size=100000, \
-                      chunk_size=10000, \
-                      add_flipped=True)
+                      chunk_size=20000, \
+                      add_flipped=False)
     rospy.logwarn("Gym environment done. always_explore = " + str(always_explore))
     rospy.logwarn("Agent is " + agent_name)
 
