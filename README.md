@@ -89,7 +89,7 @@ and run it with following params:
 docker run -d --runtime=nvidia -p 8080:8080 -p 8888:8888 karay/neuroracer
 ```
 Where `http://localhost:8080` is Gazebo Web and `http://localhost:8888` is Jupyter Lab. There is also an example notebook:
-http://localhost:8888/lab/tree/catkin_ws/src/neurorace/q_learning.ipynb
+http://localhost:8888/lab/tree/catkin_ws/src/neuroracer/q_learning.ipynb
 
 Note: This image is setup for CUDA 10 and Tensorflow GPU. So `docker-ce` and [nvidia-docker2](https://github.com/nvidia/nvidia-docker/wiki/Installation-(version-2.0)) are required.
 
