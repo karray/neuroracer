@@ -3,7 +3,7 @@ scipy
 matplotlib
 scikit-learn
 opencv-python
-gym
 keras
 jupyterlab
+gym==0.10.9
 tensorflow-gpu==1.13.1
