@@ -14,6 +14,7 @@ The whole setup can be found in [setup.sh](docker/setup.sh) which is used to set
 ### ROS Melodic ###
 Official instructions can be found [here](http://wiki.ros.org/melodic/Installation/Ubuntu)
 ```bash
+chmod +x ./docker/install_ros.s
 ./docker/install_ros.sh
 ```
 [install_ros.sh](docker/install_ros.sh)
@@ -22,6 +23,7 @@ Official instructions can be found [here](http://wiki.ros.org/melodic/Installati
 ### Catkin workspace ###
 Creating `catkin_ws` directory, cloning and building all projects:
 ```bash
+chmod +x ./docker/clone_build.sh
 ./docker/clone_build.sh <path/to/home_dir>
 ```
 [clone_build.sh](docker/clone_build.sh)
@@ -29,7 +31,7 @@ Creating `catkin_ws` directory, cloning and building all projects:
 
 ### Python packages ###
 ```bash
-pip install -U -r docker/requirements.txt
+pip install -U -r ./docker/requirements.txt
 ````
 [requirements.txt](docker/requirements.txt)
 
@@ -70,6 +72,7 @@ sudo apt install xvfb
 >[Gzweb](http://gazebosim.org/gzweb.html)
 
 ```bash
+chmod +x ./docker/install_gzweb.sh
 ./docker/install_gzweb.sh path/to/home_dir
 ```
 [install_gzweb.sh](docker/install_gzweb.sh)
@@ -85,7 +88,8 @@ and run it with following params:
 ```bash
 docker run -d --runtime=nvidia -p 8080:8080 -p 8888:8888 karay/neuroracer
 ```
-Where `http://localhost:8080` is Gazebo Web and `http://localhost:8888` is Jupyter Lab.
+Where `http://localhost:8080` is Gazebo Web and `http://localhost:8888` is Jupyter Lab. There is also an example notebook:
+http://localhost:8888/lab/tree/catkin_ws/src/neurorace/q_learning.ipynb
 
 Note: This image is setup for CUDA 10 and Tensorflow GPU. So `docker-ce` and [nvidia-docker2](https://github.com/nvidia/nvidia-docker/wiki/Installation-(version-2.0)) are required.
 
