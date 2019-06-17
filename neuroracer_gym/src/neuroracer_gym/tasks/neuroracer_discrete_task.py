@@ -16,11 +16,11 @@ np.set_printoptions(threshold=sys.maxsize)
 
 default_sleep = 2
 
-register(
+print(register(
         id='NeuroRacer-v0',
         entry_point='neuroracer_gym:tasks.neuroracer_discrete_task.NeuroRacerDiscreteTask',
         # timestep_limit=timestep_limit_per_episode,
-    )
+    ))
 
 class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
     def __init__(self):
