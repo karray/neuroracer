@@ -48,7 +48,7 @@ Start training in the second terminal:
 source ~/catkin_ws/devel/setup.bash 
 roslaunch neuroracer_gym_rl start.launch agent:=<agent name>
 ```
-There are 2 implemented agents: `dqn` and `double_dqn`
+There are 2 implemented agents: `dqn` and `double_dqn`.
 
 
 Note: if you are getting `Exception sending a message` error, you should set the `IGN_IP` environment variable ([details](http://answers.gazebosim.org/question/21103/exception-sending-a-message/?answer=22276#post-id-22276)) before launching ros-packages:
