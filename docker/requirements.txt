@@ -6,4 +6,4 @@ opencv-python
 keras
 jupyterlab
 gym==0.10.9
-tensorflow-gpu==1.13.1
+tensorflow-gpu==1.15.0
