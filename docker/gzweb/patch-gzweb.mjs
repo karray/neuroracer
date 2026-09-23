@@ -38,6 +38,13 @@ patch('node_modules/gzweb/src/Scene.ts', [
   ['new THREE.Vector3(12, -4, 0)', 'new THREE.Vector3(3, 0, 0)'],
   // Upstream conjugates the followed model's own quaternion after a drag, mirroring it.
   ['this.cameraTrackObject.quaternion.conjugate()', 'this.cameraTrackObject.quaternion.clone().conjugate()'],
+  // GzWeb's STLLoader.parse already returns a Mesh; see the STLLoader patch below.
+  ['function (geometry: THREE.BufferGeometry) {\n        mesh = new THREE.Mesh(geometry);', 'function (loaded: THREE.Mesh) {\n        mesh = loaded;'],
+]);
+// Its parse expects a Uint8Array (as the WebSocket fallback delivers), so every HTTP
+// STL load threw and silently re-fetched the mesh through Gazebo.
+patch('node_modules/gzweb/include/STLLoader.js', [
+  ['onLoad(scope.parse(text));', 'onLoad(scope.parse(new Uint8Array(text)));'],
 ]);
 patch('node_modules/gzweb/src/Transport.ts', [
   // Jetty names camera messages gz.msgs.Image; only then are they streamed as PNG.

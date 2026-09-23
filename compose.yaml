@@ -31,6 +31,10 @@ services:
     image: neuroracer-gzweb:local
     build: ./docker/gzweb
     depends_on: [dev]
+    # GzWeb first fetches meshes by their simulator file path; serving that path over
+    # HTTP makes them browser-cacheable instead of re-sent over Gazebo's WebSocket.
+    volumes:
+      - ./ros2/neuroracer_sim/models:/usr/share/nginx/html/workspace/.ros2/install/neuroracer_sim/share/neuroracer_sim/models:ro
     ports:
       - "127.0.0.1:8090:8090"
     mem_limit: 128m

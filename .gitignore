@@ -28,3 +28,6 @@ __pycache__/
 runs/
 *.pt
 *.pth
+
+# Local scratch and test scripts
+tmp/

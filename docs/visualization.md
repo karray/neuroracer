@@ -29,8 +29,8 @@ world timing. Neither viewer is part of the RL control path.
   inset off to remove that cost.
 - ROS bridges for camera, lidar, odometry and clock subscribe lazily. Mesa uses
   four worker threads (`LP_NUM_THREADS`); PyTorch uses `--threads`.
-- Nginx serves the prebuilt frontend and proxies `/ws` to Gazebo's internal port
-  9002, limited to 128 MiB and 32 processes.
+- Nginx serves the prebuilt frontend and the model meshes (browser-cached), and
+  proxies `/ws` to Gazebo's internal port 9002, limited to 128 MiB and 32 processes.
 
 ## Maintenance
 
@@ -41,7 +41,8 @@ cache; during a running session use
 GzWeb 3.0.2 is pinned. Its npm release omits custom loaders, so the build fetches
 the matching upstream commit by checksum. `patch-gzweb.mjs` applies small fixes
 (message namespaces including camera images, disconnect cleanup, module imports,
-Play request framing, initial and follow camera, render throttling) and fails the build if upstream source
+Play request framing, initial and follow camera, render throttling, STL loading
+over HTTP) and fails the build if upstream source
 changes. Review these patches when upgrading.
 
 `ros2/neuroracer_websocket` builds Jetty 10.5.0's WebSocket plugin with one
