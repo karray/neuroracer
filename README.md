@@ -1,102 +1,71 @@
 ![](assets/neuroracer.gif)
 
+# NeuroRacer
 
-The goal of this project is to provide an easy-to-use framework that will allow to simulate a training of a self-driving car using OpenAI Gym, ROS and Gazebo. The project is based on openai_ros package. This package implements an architecture that was proposed by The Construct team.
+A camera-based reinforcement-learning racecar simulator built on ROS 2 Lyrical,
+Gazebo Jetty, Gymnasium 1.3 and PyTorch 2.14, running in Docker.
 
-# Software requirements #
-* Ubuntu 18.04 or Windows WSL Ubuntu 18.04
-* Python 2.7 and pip2
-* Tensorflow CPU or GPU
+## Setup
 
-# Installation #
-The whole setup can be found in [setup.sh](docker/setup.sh) which is used to setup docker ([goto docker section](#Docker)) which is the simplest way to launch the simulation.
+Requires Docker Engine with Compose v2 on Linux amd64 and about 15 GB of free
+disk space. Rendering is CPU/software by default.
 
-### ROS Melodic ###
-Official instructions can be found [here](http://wiki.ros.org/melodic/Installation/Ubuntu)
 ```bash
-chmod +x ./docker/install_ros.s
-./docker/install_ros.sh
-```
-[install_ros.sh](docker/install_ros.sh)
-
-
-### Catkin workspace ###
-Creating `catkin_ws` directory, cloning and building all projects:
-```bash
-chmod +x ./docker/clone_build.sh
-./docker/clone_build.sh <path/to/home_dir>
-```
-[clone_build.sh](docker/clone_build.sh)
-
-
-### Python packages ###
-```bash
-pip install -U -r ./docker/requirements.txt
-````
-[requirements.txt](docker/requirements.txt)
-
-
-# Start training #
-Start MIT racecar simulation in its own terminal:
-```bash
-source ~/<catkin_ws>/devel/setup.bash
-roslaunch racecar_gazebo racecar_tunnel.launch
+./scripts/dev setup      # build image, start container, colcon build, unit tests
+./scripts/dev web        # headless Gazebo + browser viewer at http://localhost:8090/
 ```
 
-Start training in the second terminal:
-```bash
-source ~/catkin_ws/devel/setup.bash 
-roslaunch neuroracer_gym_rl start.launch agent:=<agent name>
-```
-There are 2 implemented agents: `dqn` and `double_dqn`.
-
-
-Note: if you are getting `Exception sending a message` error, you should set the `IGN_IP` environment variable ([details](http://answers.gazebosim.org/question/21103/exception-sending-a-message/?answer=22276#post-id-22276)) before launching ros-packages:
-```bash
-export IGN_IP=127.0.0.1
-```
-# WSL and headless setup #
-Sometimes headless setup is needed. For example, when there is only ssh access to the server or if the server runs on Windows.
-
-### Xvfb ###
-Headless setup has a couple of special requirements. In order to get the camera rendering a view, you will need an xserver running. This can be achieved in several ways. The universal solution is Xvfb.
-
->Xvfb or X virtual framebuffer is a display server implementing the X11 display server protocol. In contrast to other display servers, Xvfb performs all graphical operations in virtual memory without showing any screen output.
->[wikipedia](https://en.wikipedia.org/wiki/Xvfb)
-```bash
-sudo apt install xvfb
-```
-
-### Gazebo Web ###
->Gzweb is a WebGL client for Gazebo. Like gzclient, it's a front-end graphical interface to gzserver and provides visualization of the simulation. However, Gzweb is a thin client in comparison, and lets you interact with the simulation from the comfort of a web browser. This means cross-platform support, minimal client-side installation, and support for mobile devices.
->[Gzweb](http://gazebosim.org/gzweb.html)
+Keep `web` running. The world starts paused; training controls pause/advance
+itself. Use `./scripts/dev sim` instead of `web` for training without a browser,
+and `./scripts/dev vnc` for the full Gazebo desktop (see [visualization](docs/visualization.md)).
+Only one simulator and one controller may run at a time.
 
 ```bash
-chmod +x ./docker/install_gzweb.sh
-./docker/install_gzweb.sh path/to/home_dir
+./scripts/dev check-sim  # drive/steer/reset integration check (simulator required)
+./scripts/dev check      # unit tests (no simulator required)
+./scripts/dev shell      # development shell
+./scripts/dev build      # rebuild after adding package files or dependencies
+./scripts/dev down       # stop everything
 ```
-[install_gzweb.sh](docker/install_gzweb.sh)
 
+Source is bind-mounted and colcon uses symlink installation, so Python edits
+apply on process restart. Build artifacts go to the ignored `.ros2/` directory.
+The container runs with your UID/GID; save data under `/workspace`.
 
-# Docker #
-Just pull the image:
+## Gymnasium environment
+
+```python
+import gymnasium as gym
+import neuroracer_gym
+
+with gym.make('NeuroRacerDiscrete-v0') as env:
+    image, info = env.reset()
+    image, reward, terminated, truncated, info = env.step(1)  # drive straight
+```
+
+- `NeuroRacerDiscrete-v0`: actions 0/1/2 steer right/straight/left.
+  `NeuroRacerContinuous-v0`: a float32 array with one steering value in [-1, 1].
+- Observations are 480×640 RGB uint8 camera images. Steering is limited to
+  ±0.6 rad at a constant 1 m/s.
+- Each step advances about 0.1 s of simulation and waits for fresh sensor data;
+  the world is paused between steps. All waits have wall-clock timeouts.
+- Reward is lidar forward clearance minus left/right imbalance; a collision
+  terminates the episode with -100. Episodes truncate after 1000 steps
+  (`gym.make(..., max_episode_steps=N)` overrides this).
+- `reset(options={'pose': (x, y, yaw)})` sets the start pose (default `(2, 3.7, pi/2)`).
+- ROS topics: `/camera/image_raw`, `/scan`, `/odom`, `/clock`, `/cmd_vel`
+  (`angular.z` is yaw rate, not steering angle).
+
+## Training
+
+With `web` or `sim` running, in a second terminal:
+
 ```bash
-docker pull karay/neuroracer
+./scripts/dev train double_dqn --steps 100000 --output runs/first-run
+./scripts/dev train --resume runs/first-run/latest.pt --steps 10000
+./scripts/dev eval runs/first-run/latest.pt --episodes 3
 ```
 
-and run it with following params:
-```bash
-docker run -d --runtime=nvidia -p 8080:8080 -p 8888:8888 karay/neuroracer
-```
-Where `http://localhost:8080` is Gazebo Web and `http://localhost:8888` is Jupyter Lab. There is also an example notebook:
-http://localhost:8888/lab/tree/catkin_ws/src/neuroracer/q_learning.ipynb
-
-Note: This image is setup for CUDA 10 and Tensorflow GPU. So `docker-ce` and [nvidia-docker2](https://github.com/nvidia/nvidia-docker/wiki/Installation-(version-2.0)) are required.
-
-
-<!---
-windows xserver for camera
-process has died exit code -9: The script needed too much memory
-laser bug.
-simulation start delay
---->
+Agents: `dqn`, `double_dqn`, `drqn`, `double_drqn` (discrete) and `ddpg`
+(continuous). See [training details](docs/pytorch-training.md).
+`q_learning.ipynb` shows the same Python API.

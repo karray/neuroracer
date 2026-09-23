@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>neuroracer_websocket</name><version>0.1.0</version>
+  <description>Gazebo Jetty WebSocket plugin with disconnect queue accounting fixed.</description>
+  <maintainer email="aray@todo.todo">aray</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>gz_sim_vendor</depend><depend>gz_common_vendor</depend>
+  <depend>gz_fuel_tools_vendor</depend><depend>gz_msgs_vendor</depend>
+  <depend>gz_plugin_vendor</depend><depend>gz_transport_vendor</depend>
+  <depend>libwebsockets-dev</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

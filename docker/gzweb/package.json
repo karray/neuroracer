@@ -1,0 +1,20 @@
+{
+  "name": "neuroracer-viewer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node patch-gzweb.mjs && esbuild app.js --bundle --minify --format=esm --outfile=dist/app.js"
+  },
+  "dependencies": {
+    "gzweb": "3.0.2",
+    "@babel/runtime": "7.28.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  },
+  "overrides": {
+    "protobufjs": "8.8.0",
+    "fast-xml-parser": "5.11.1",
+    "uuid": "11.1.1"
+  }
+}

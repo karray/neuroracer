@@ -1,9 +1,6 @@
-overlay/*
 .ipynb_checkpoints/
 
 *.pyc
-*.h5
-*.hdf5
 
 .vscode/*
 !.vscode/settings.json
@@ -20,3 +17,14 @@ overlay/*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# ROS 2 development workspace
+.ros2/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+
+# PyTorch training artifacts
+runs/
+*.pt
+*.pth

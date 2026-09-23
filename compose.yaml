@@ -1,0 +1,38 @@
+name: neuroracer-ros2
+services:
+  dev:
+    image: neuroracer-ros2:lyrical
+    build:
+      context: docker
+      dockerfile: Dockerfile.ros2
+    init: true
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/docker/ros2-entrypoint.sh"]
+    command: ["sleep", "infinity"]
+    environment:
+      HOME: /tmp/neuroracer-ros2-home
+      ROS_DOMAIN_ID: "42"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      GZ_PARTITION: neuroracer-ros2
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      LP_NUM_THREADS: "4"
+      QT_X11_NO_MITSHM: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/workspace
+    ports:
+      - "127.0.0.1:8091:8091"
+    shm_size: 1gb
+    stop_grace_period: 20s
+
+  web:
+    profiles: [web]
+    image: neuroracer-gzweb:local
+    build: ./docker/gzweb
+    depends_on: [dev]
+    ports:
+      - "127.0.0.1:8090:8090"
+    mem_limit: 128m
+    pids_limit: 32
+    restart: "no"
