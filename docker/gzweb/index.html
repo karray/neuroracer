@@ -4,12 +4,13 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NeuroRacer · Gazebo</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#151c26;color:#edf2f8;font:14px system-ui,sans-serif}header{height:64px;display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid #354153}strong{font-size:18px;margin-right:10px}#status{color:#b1c3d9;margin-right:auto}button,a{font:inherit;color:inherit;background:#26364b;border:1px solid #465a72;border-radius:6px;padding:8px 12px;text-decoration:none;cursor:pointer}button:hover,a:hover{background:#39506e}button:disabled{opacity:.4;cursor:default}#gz-scene{height:calc(100dvh - 102px);width:100%;overflow:hidden}canvas{display:block}footer{height:38px;padding:9px 20px;color:#b1c3d9;font-size:12px} @media(max-width:760px){header{height:auto;flex-wrap:wrap}#gz-scene{height:75dvh}}
+*{box-sizing:border-box}body{margin:0;background:#151c26;color:#edf2f8;font:14px system-ui,sans-serif}header{height:64px;display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid #354153}strong{font-size:18px;margin-right:10px}#status{color:#b1c3d9;margin-right:auto}button,a{font:inherit;color:inherit;background:#26364b;border:1px solid #465a72;border-radius:6px;padding:8px 12px;text-decoration:none;cursor:pointer}button:hover,a:hover{background:#39506e}button:disabled{opacity:.4;cursor:default}button[aria-pressed=true]{background:#39506e;border-color:#b1c3d9}#gz-scene{height:calc(100dvh - 102px);width:100%;overflow:hidden}canvas{display:block}#pip{position:fixed;right:16px;bottom:46px;width:min(320px,45vw);aspect-ratio:4/3;margin:0;display:grid;place-items:center;overflow:hidden;border:1px solid #465a72;border-radius:6px;background:#000}#pip[hidden],#pip [hidden]{display:none}#pip img{width:100%;height:100%;object-fit:contain}#pip figcaption{position:absolute;padding:8px;text-align:center;color:#b1c3d9;font-size:12px}footer{height:38px;padding:9px 20px;color:#b1c3d9;font-size:12px} @media(max-width:760px){header{height:auto;flex-wrap:wrap}#gz-scene{height:75dvh}}
 </style>
 </head>
 <body>
-<header><strong>NeuroRacer</strong><span id="status" role="status">Connecting…</span><button id="connect">Disconnect</button><button id="car" disabled>View car</button><button id="overview" disabled>Overview</button><button id="play" disabled>Play</button><button id="pause" disabled>Pause</button></header>
+<header><strong>NeuroRacer</strong><span id="status" role="status">Connecting…</span><button id="connect">Disconnect</button><button id="car" disabled>Follow car</button><button id="overview" disabled>Overview</button><button id="play" disabled>Play</button><button id="pause" disabled>Pause</button><button id="camera" aria-pressed="true">Camera</button></header>
 <main id="gz-scene" aria-label="Live Gazebo scene"></main>
-<footer>Drag to orbit · Scroll to zoom · Leave Play/Pause to the training process while training.</footer>
+<figure id="pip" hidden><img alt="Car camera" hidden><figcaption>Car camera: no frames while the world is paused</figcaption></figure>
+<footer>Drag to orbit (also adjusts the follow offset) · Scroll to zoom · Leave Play/Pause to the training process while training.</footer>
 <script type="module" src="/app.js"></script>
 </body></html>

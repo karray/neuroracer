@@ -33,6 +33,15 @@ patch('node_modules/gzweb/src/Scene.ts', [
   ['import * as JSZip from "jszip";', 'import JSZip from "jszip";'],
   ['Math.max(bboxSize.x, bboxSize.y, bboxSize.z)', 'Math.max(bboxSize.x, bboxSize.y, bboxSize.z, 1.5)'],
   ['    this.renderer.renderLists.dispose();', '    this.controls.dispose();\n    this.renderer.forceContextLoss();\n    this.renderer.renderLists.dispose();'],
+  // Third-person follow defaults are sized for a full-size vehicle; frame the 0.5 m racecar.
+  ['new THREE.Vector3(\n    -6,\n    -2,\n    1.5,\n  )', 'new THREE.Vector3(-1.2, 0, 0.6)'],
+  ['new THREE.Vector3(12, -4, 0)', 'new THREE.Vector3(3, 0, 0)'],
+  // Upstream conjugates the followed model's own quaternion after a drag, mirroring it.
+  ['this.cameraTrackObject.quaternion.conjugate()', 'this.cameraTrackObject.quaternion.clone().conjugate()'],
+]);
+patch('node_modules/gzweb/src/Transport.ts', [
+  // Jetty names camera messages gz.msgs.Image; only then are they streamed as PNG.
+  ['"ignition.msgs.Image"', '"gz.msgs.Image"'],
 ]);
 patch('node_modules/three-nebula/build/esm/utils/uid.js', [
   ["import uid from 'uuid/v1';", "import {v1 as uid} from 'uuid';"],
