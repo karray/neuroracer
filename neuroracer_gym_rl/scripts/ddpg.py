@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch import nn
 import timm
+from timm.layers import GroupNorm
 
 from utils import H5Buffer, Normalize, EMA, autocast, save_checkpoint, load_checkpoint, loginfo
 
@@ -28,7 +29,8 @@ class OrnsteinUhlenbeckProcess:
 
 
 def resnet18(frames, outputs):
-    return timm.create_model('resnet18', pretrained=False, in_chans=3 * frames, num_classes=outputs)  # RGB frames
+    # RGB frames; GroupNorm instead of BatchNorm, which is unstable at batch size 16.
+    return timm.create_model('resnet18', pretrained=False, in_chans=3 * frames, num_classes=outputs, norm_layer=GroupNorm)
 
 
 class Critic(nn.Module):
@@ -45,7 +47,7 @@ class Critic(nn.Module):
 
 
 class Agent:
-    def __init__(self, state_size, action_size, buffer_max_size, chunk_size, add_flipped, always_explore=False, working_dir='.'):
+    def __init__(self, state_size, action_size, buffer_max_size, chunk_size, add_flipped, working_dir='.'):
         self.weight_backup      = os.path.join(working_dir, 'ddpg_{}f.pt'.format(state_size[2]))
 
         self.state_size = state_size
@@ -57,7 +59,7 @@ class Agent:
         self.learning_rate_actor = 0.0001
         self.learning_rate_critic = 0.001
         self.gamma              = 0.9
-        self.exploration_rate   = 0.95  # Unused, as in the original: exploration is the OU noise.
+        self.exploration_rate   = None  # Exploration is the OU noise.
         self.nb_steps_warmup    = 500
         self.ema_decay          = 0.999  # target_model_update=.001
         self.l2 = 0.01
@@ -68,8 +70,8 @@ class Agent:
 
         self.random_process = OrnsteinUhlenbeckProcess(size=self.nb_actions, theta=.15, mu=0., sigma=.2)
 
-        self.actor = self._create_actor().to(self.device, memory_format=torch.channels_last)
-        self.critic = self._create_critic().to(self.device, memory_format=torch.channels_last)
+        self.actor = self._create_actor().to(self.device)
+        self.critic = self._create_critic().to(self.device)
         # Target networks, EMAs of the weights; the car drives with the target actor.
         self.target_actor = EMA(self.actor, self.ema_decay)
         self.target_critic = EMA(self.critic, self.ema_decay)
@@ -116,9 +118,6 @@ class Agent:
         action = self.target_actor(torch.as_tensor(state, device=self.device))[0].cpu().numpy()
         action = action + self.random_process.sample()
         return np.clip(action, -1, 1).astype(np.float32)
-
-    def update_exploration(self):
-        pass  # The OU noise does not decay.
 
     def _optimize(self, model, loss):
         model.optimizer.zero_grad()

@@ -96,9 +96,27 @@ def test_replay_trains_saves_and_resumes(name, tmp_path):
     assert resumed.progress['steps'] == 24
     assert all(torch.equal(a, b) for a, b in zip(resumed_model.parameters(), model.parameters()))
     assert all(torch.equal(a, b) for a, b in zip(resumed_ema.module.parameters(), ema.module.parameters()))
-    if name != 'ddpg':
-        assert resumed.exploration_rate == resumed.exploration_min
+    assert resumed.exploration_rate == agent.exploration_rate  # The schedule continues.
     resumed.buffer.close()
+
+
+def test_exploration_decays_linearly_with_collected_steps(tmp_path):
+    agent = make_agent('dqn', tmp_path)
+    for steps, rate in ((0, 1.0), (25000, 0.505), (50000, 0.01), (200000, 0.01)):
+        agent.progress['steps'] = steps
+        assert agent.exploration_rate == pytest.approx(rate)
+    agent.buffer.close()
+
+
+def test_mirrored_transitions_swap_left_and_right(tmp_path):
+    agent = make_agent('dqn', tmp_path)
+    states = torch.arange(2 * 6 * 64 * 64).reshape(2, 6, 64, 64)
+    batch = {'actions': torch.tensor([0, 2]), 'states': states, 'next_states': states + 1}
+    flipped = agent.flip(batch, torch.tensor([True, False]))
+    assert flipped['actions'].tolist() == [2, 2]
+    assert torch.equal(flipped['states'][0], states[0].flip(-1)) and torch.equal(flipped['states'][1], states[1])
+    assert torch.equal(flipped['next_states'][0], states[0].flip(-1) + 1)
+    agent.buffer.close()
 
 
 class CameraEnv(gym.Env):
@@ -141,12 +159,12 @@ def test_learner_trains_while_collecting_and_run_resumes(tmp_path):
     agent = game.agent
     assert agent.progress == {'steps': 20, 'episodes': 4}
     assert agent.loss is not None  # Trained from the first batch, beside collection.
-    assert agent.exploration_rate == pytest.approx(0.85 * 0.99 ** 2)
+    assert agent.exploration_rate == pytest.approx(1 - 0.99 * 20 / 50000)
     assert game.env.unwrapped.closed and not (tmp_path / 'buffer.hdf5').exists()
     assert len(open(tmp_path / 'metrics.jsonl').readlines()) == 4
 
     game = NeuroRacer(small_dqn, sample_batch_size=10, n_frames=2, buffer_max_size=100, chunk_size=16,
                       add_flipped=False, env_id='CameraEnv-v0', working_dir=str(tmp_path))
     assert game.agent.progress == {'steps': 20, 'episodes': 4}
-    assert game.agent.exploration_rate == game.agent.exploration_min
+    assert game.agent.exploration_rate == pytest.approx(1 - 0.99 * 20 / 50000)
     game.agent.buffer.close()

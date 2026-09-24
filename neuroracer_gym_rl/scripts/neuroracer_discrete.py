@@ -35,10 +35,11 @@ class Learner(threading.Thread):
 
 
 class NeuroRacer:
-    def __init__(self, agent_class, sample_batch_size, n_frames, buffer_max_size, chunk_size, add_flipped, always_explore=False,
-                 env_id='NeuroRacer-v0', working_dir='.'):
+    def __init__(self, agent_class, sample_batch_size, n_frames, buffer_max_size, chunk_size, add_flipped,
+                 env_id='NeuroRacer-v0', working_dir='.', max_episode_steps=1200):
         self.sample_batch_size = sample_batch_size
-        self.env               = gym.make(env_id)
+        # Episodes that reach the limit are truncated: their last state is not terminal.
+        self.env               = gym.make(env_id, max_episode_steps=max_episode_steps)
 
         self.highest_reward    = -np.inf
 
@@ -57,7 +58,7 @@ class NeuroRacer:
             self.action_size   = self.env.action_space.shape[0]
         os.makedirs(working_dir, exist_ok=True)
         self.agent             = agent_class(self.state_size, self.action_size, buffer_max_size, chunk_size, add_flipped,
-                                             always_explore=always_explore, working_dir=working_dir)
+                                             working_dir=working_dir)
         self.metrics_path      = os.path.join(working_dir, 'metrics.jsonl')
 
 
@@ -119,7 +120,6 @@ class NeuroRacer:
 
                     if steps % self.sample_batch_size == 0:
                         # Once per sample batch, as the original replay did; training runs continuously in Learner.
-                        self.agent.update_exploration()
                         self.agent.save_requested = True
                         if steps >= n_steps:
                             do_training = False

@@ -13,7 +13,7 @@ from timm.utils import ModelEmaV3
 
 loginfo = partial(print, flush=True)
 # Largest batch per GPU pass while training: long passes would delay the driving policy's.
-micro_batch_size = 32
+micro_batch_size = 16
 
 
 def preprocess(img, y_offset, size, interpolation=cv2.INTER_AREA):
@@ -126,10 +126,9 @@ class Block():
 
 
 class Normalize(nn.Module):
-    """uint8 frames to [0, 1], as the original preprocess did, in the channels-last layout
-    that makes convolutions faster on tensor cores."""
+    """uint8 frames to [0, 1], as the original preprocess did."""
     def forward(self, states):
-        return (states.float() / 255.0).contiguous(memory_format=torch.channels_last)
+        return states.float() / 255.0
 
 
 def autocast(device):
@@ -145,39 +144,28 @@ def wait_for_gpu(tensor):
     return tensor
 
 
-def predict(model, states):
-    model.eval()
-    with torch.no_grad(), autocast(states.device):
-        return wait_for_gpu(model(states).float())
+def fit(model, block, rows, loss, batch_size, flipped=False, ema=None):
+    """One shuffled epoch over the transitions `rows` of `block`. `loss(batch, mirrored)`
+    returns a micro-batch's summed loss; with `flipped`, every row appears a second time
+    with `mirrored` set, for a left-right mirrored copy.
 
-
-def fit(model, block, rows, targets, batch_size, flipped=False, ema=None):
-    """One shuffled epoch, like Keras' fit(states, targets, shuffle=True, epochs=1). With
-    `flipped`, targets[len(rows):] belong to the mirrored states of the same rows.
-
-    Each batch's MSE gradient is summed over micro-batches before the optimizer step: the
-    same update, but in short GPU kernels between which the driving policy can run.
-    `ema` follows every optimizer step."""
+    Each batch's gradient is summed over micro-batches before the optimizer step: the same
+    update, but in short GPU kernels between which the driving policy can run. `ema`
+    follows every optimizer step."""
     model.train()
-    order = torch.randperm(len(targets), device=targets.device)
+    order = torch.randperm(len(rows) * (2 if flipped else 1), device=rows.device)
     for start in range(0, len(order), batch_size):
         index = order[start:start + batch_size]
         model.optimizer.zero_grad()
-        loss = 0.0
+        total = 0.0
         for part in index.split(micro_batch_size):
-            states = block.states(rows[part % len(rows)])
-            if flipped:
-                mirror = part >= len(rows)
-                states[mirror] = states[mirror].flip(-1)
-            with autocast(states.device):
-                values = model(states)
-            part_loss = nn.functional.mse_loss(values.float(), targets[part], reduction='sum') / targets[index].numel()
+            part_loss = loss(block.batch(rows[part % len(rows)]), part >= len(rows)) / len(index)
             part_loss.backward()
-            loss += wait_for_gpu(part_loss.detach())
+            total += wait_for_gpu(part_loss.detach())
         model.optimizer.step()
         if ema is not None:
             ema.update(model)
-    return float(loss)
+    return float(total)
 
 
 class EMA():
