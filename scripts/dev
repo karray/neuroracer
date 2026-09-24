@@ -6,18 +6,18 @@ compose=(docker compose -f compose.yaml)
 if [[ "${NEURORACER_GPU:-1}" != 0 ]] && docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
   compose+=(-f compose.gpu.yaml)
 fi
-entry=/workspace/docker/ros2-entrypoint.sh
+entry=/workspace/docker/entrypoint.sh
 exec_options=(-T)
 if [[ -t 0 && -t 1 ]]; then exec_options=(); fi
 case "${1:-help}" in
   setup) "${compose[@]}" build; "${compose[@]}" up -d; "$0" build; "$0" check ;;
-  build) "${compose[@]}" exec -T dev bash "$entry" bash -c 'python /usr/bin/colcon --log-base .ros2/log build --base-paths ros2 --build-base .ros2/build --install-base .ros2/install --symlink-install' ;;
+  build) "${compose[@]}" exec -T dev bash "$entry" bash -c 'python /usr/bin/colcon --log-base .colcon/log build --base-paths neuroracer_gym neuroracer_gym_rl neuroracer_sim neuroracer_websocket --build-base .colcon/build --install-base .colcon/install --symlink-install' ;;
   up) "${compose[@]}" up -d ;;
   down) "${compose[@]}" --profile web down ;;
   shell) "${compose[@]}" exec dev bash "$entry" bash ;;
-  check) "${compose[@]}" exec -T dev bash "$entry" python -m pytest ros2/neuroracer_gym/test ros2/neuroracer_rl/test -q ;;
+  check) "${compose[@]}" exec -T dev bash "$entry" python -m pytest neuroracer_gym/test neuroracer_gym_rl/test -q ;;
   check-sim) "${compose[@]}" exec -T dev bash "$entry" timeout 120 python scripts/check-sim.py ;;
-  sim) exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/ros2-sim.sh false ;;
+  sim) exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/start.sh false ;;
   web)
     "${compose[@]}" exec -T dev flock -n /tmp/neuroracer-sim.lock true || {
       echo 'A simulator is already running; stop it before switching modes.' >&2; exit 1;
@@ -25,12 +25,17 @@ case "${1:-help}" in
     "${compose[@]}" --profile web up -d --build --no-deps web
     echo 'GzWeb: http://localhost:8090 (world starts paused)'
     trap '"${compose[@]}" --profile web stop web >/dev/null' EXIT
-    "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/ros2-sim.sh true
+    "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/start.sh true
     ;;
-  vnc) exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/ros2-vnc.sh ;;
-  train|eval)
-    exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" python -m neuroracer_rl.cli "$@"
+  vnc) exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/vnc.sh ;;
+  train)
+    shift
+    exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" ros2 run neuroracer_gym_rl training.py "$@"
     ;;
-  help|-h|--help) echo "Usage: $0 {setup|build|up|down|shell|check|check-sim|sim|web|vnc|train [algorithm] [options]|eval CHECKPOINT [options]}" ;;
+  notebook)
+    echo 'Jupyter Lab: http://localhost:8888/lab/tree/q_learning.ipynb'
+    exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" jupyter lab --ip 0.0.0.0 --port 8888 --no-browser --IdentityProvider.token='' --ServerApp.password=''
+    ;;
+  help|-h|--help) echo "Usage: $0 {setup|build|up|down|shell|check|check-sim|sim|web|vnc|notebook|train AGENT [options]}" ;;
   *) echo "Unknown command: $1" >&2; exit 2 ;;
 esac

@@ -46,7 +46,7 @@ Play request framing, initial and follow camera, render throttling, STL loading
 over HTTP) and fails the build if upstream source
 changes. Review these patches when upgrading.
 
-`ros2/neuroracer_websocket` builds Jetty 10.5.0's WebSocket plugin with one
+`neuroracer_websocket` builds Jetty 10.5.0's WebSocket plugin with one
 disconnect accounting fix; without it a disconnect with queued messages leaves
 its event thread spinning a full CPU core. Only `web` loads it; see
-[UPSTREAM.md](../ros2/neuroracer_websocket/UPSTREAM.md). Remove it once upstream ships the fix.
+[UPSTREAM.md](../neuroracer_websocket/UPSTREAM.md). Remove it once upstream ships the fix.

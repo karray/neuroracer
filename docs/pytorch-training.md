@@ -6,44 +6,68 @@ The runtime uses PyTorch 2.14.0 (CUDA 13.0 wheel) and Gymnasium 1.3.0. Start
 ## Commands
 
 ```bash
-./scripts/dev train double_dqn --steps 100000 --output runs/first-run
-./scripts/dev train --resume runs/first-run/latest.pt --steps 10000
-./scripts/dev eval runs/first-run/latest.pt --episodes 3
+./scripts/dev train dqn                          # runs/dqn, 200,000 steps
+./scripts/dev train double_dqn --output runs/first-run --steps 50000
 ./scripts/dev train --help
 ```
 
-Without `--output`, a timestamped directory is created under `runs/`. A fresh
-run never overwrites an existing checkpoint. `--steps` on resume means
-additional steps. `eval` runs without exploration, learning or checkpoint writes.
+`scripts/training.py` builds the `NeuroRacer` loop (`neuroracer_discrete.py`)
+with the agent module of that name. If the output directory already holds the
+agent's checkpoint (`<agent>_16f.pt`), it is loaded and training continues:
+exploration then starts at its minimum, or at the saved rate with
+`--always-explore true`. Ctrl-C stops training and saves the model.
+`ros2 launch neuroracer_gym_rl start.launch agent:=dqn` starts the same, and
+`ddpg_learning.launch` or `ddpg.py` trains DDPG on `NeuroRacer-v1`.
+Evaluation is in `q_learning.ipynb` (`./scripts/dev notebook`).
 
-Hyperparameters (`--frames`, `--batch-size`, `--buffer-size`, `--block-size`, `--warmup`,
-`--learning-rate`, `--gamma`, `--target-interval`, `--epsilon-steps`, `--seed`,
-`--threads`, DDPG's `--actor-learning-rate`, `--tau`, `--noise-std`, …) mirror
-the fields of `neuroracer_rl.config.Config`. On `--resume` the checkpoint's
-settings are used and overrides are rejected.
+## Environment
+
+`NeuroRacer-v0` (`tasks/neuroracer_discrete_task.py`): actions 0/1/2 steer
+right/straight/left (±1 rad) at `speed = 1`, which `_create_steering_command`
+maps like racecar_control's `servo_commands.py` (about 0.5 m/s). The reward is
+the lidar forward clearance minus the left/right imbalance; a collision ends the
+episode with -100. `NeuroRacer-v1` steers continuously in [-1, 1] at
+`speed = 10` with reward `1 - |action| - |steering|`.
+
+- Observations are 480×640 BGR uint8 camera images.
+- Each step advances exactly 0.1 s of physics (`multi_step` on the paused world)
+  and returns the camera, lidar and odometry of that instant; the sensors run at
+  10 Hz to match. The world is otherwise unthrottled, so steps run faster than
+  real time. All waits have wall-clock timeouts.
+- `reset` brakes the car and teleports it to `env.unwrapped.initial_position`
+  (the spawn pose if unset) instead of resetting the world: Gazebo Jetty
+  recreates plugins without a Reset hook on a world reset, which corrupts its
+  heap under load. The training loop sets a random x in [1, 4] and a random
+  heading for every episode. `info` holds the ground-truth `position` and `yaw`.
+- Episodes have no time limit, as before; `gym.make(..., max_episode_steps=N)` adds one.
+- ROS topics: `/camera/image_raw`, `/scan`, `/odom`, `/cmd_vel`
+  (`angular.z` is yaw rate, not steering angle).
 
 ## Collection and training
 
 The simulator is stepped on the main thread and every transition is appended to
-a cyclic replay buffer in `<output>/replay.h5`. Its capacity (`--buffer-size`,
-default 1,000,000, about 7 GB) is limited by disk, not RAM: the larger it is,
-the longer rare and old experience stays in training, which counters
-catastrophic forgetting. Each frame is stored once and stacks are rebuilt when
-read. The file is deleted when training ends.
+the agent's cyclic replay buffer `H5Buffer` in `<output>/buffer.hdf5`. Its
+capacity (1,000,000 transitions, about 7 GB) is limited by disk, not RAM: the
+larger it is, the longer rare and old experience stays in training, which
+counters catastrophic forgetting. Each preprocessed frame is stored once and
+stacks are rebuilt when read. The file is deleted when training ends.
 
-A learner thread starts as soon as the buffer holds one batch and trains
-continuously: each epoch reads a random contiguous block (`--block-size`,
-default 10,000 transitions; HDF5 reads blocks much faster than scattered rows)
-into GPU memory, updates on it in shuffled batches (`--batch-size`, default
-128) whose frame stacks are gathered on the GPU, and then copies the weights to
-the policy network the car drives with. Thread timing varies, so runs with the
-same seed are not bit-identical. With an RTX 3060 Ti the learner keeps the GPU
-about 90% busy (about 150 updates/s) while the simulator runs at about 20 steps/s.
+A learner thread calls the agent's `replay()` continuously as soon as the buffer
+holds one batch. `replay()` works as before: it takes two chunks of 20,000
+transitions (one while the buffer is smaller than two), now random contiguous
+blocks read into GPU memory, computes their Q targets once with the model as
+it is before the chunk (`double_*`: with the target model, which is updated
+every 10 replays), and fits one shuffled epoch. The car then drives with the new
+weights. The GPU runs targets and gradients in micro-batches of 128 (a batch's
+gradients are summed before its optimizer step, so updates are unchanged) and
+the learner waits for each one: CUDA executes work in the order it was queued,
+so long or queued-up training work would delay every driving decision. Exploration decays every 1,000 collected steps and the model is saved
+after the next replay.
 
 ## GPU
 
-`--device auto` (the default) trains on CUDA when PyTorch sees a GPU. For the
-container to see an NVIDIA GPU, install the
+Training uses CUDA when PyTorch sees a GPU. For the container to see an NVIDIA
+GPU, install the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 on the host, then:
 
@@ -58,30 +82,28 @@ sudo systemctl restart docker
 
 ## Agents
 
-| Agent | Model | Learning rule |
-| --- | --- | --- |
-| dqn | CNN over stacked grayscale frames | Target-network DQN |
-| double_dqn | Same CNN | Online network selects, target network evaluates |
-| drqn | Per-frame CNN followed by an LSTM | Recurrent DQN |
-| double_drqn | Same CNN/LSTM | Recurrent Double DQN |
-| ddpg | Separate CNN actor and critic | Deterministic actor/critic, soft target updates |
+The agents are PyTorch ports of the original Keras models, with their
+hyperparameters (Keras default initialization, Adam with lr 0.001, MSE, γ 0.9;
+exploration 0.85, ×0.99 per 1,000 steps, down to 0.01):
+
+| Agent | Model | Targets | Batch |
+| --- | --- | --- | --- |
+| dqn | CNN (16, 32, 64 filters, LeakyReLU, dropout) → 256 → 128 | the model | 1000 |
+| double_dqn | Same CNN | target model | 1000 |
+| drqn | Same CNN per frame → LSTM 512 | the model | 128 |
+| double_drqn | Same CNN per frame → LSTM 512 | target model | 128 |
+| ddpg | Actor and critic: 3 × Conv 32 → 200 (keras-rl DDPG) | soft target models (τ 0.001) | 16 |
 
 Preprocessing crops the top 200 pixels, converts to grayscale, resizes to
-56×128 and stacks 16 frames. Recurrent agents encode each frame and run the LSTM
-across the window, so no hidden state is carried between replay samples. DQN
-variants use Huber loss; all agents clip gradients. DDPG explores with clipped
-Gaussian noise after a uniform-random warmup.
-
-Only termination masks the Bellman bootstrap; a time-limit truncation still
-bootstraps from the final observation.
+56×128 and stacks 16 frames. DDPG explores with Ornstein-Uhlenbeck noise and
+trains after 500 warmup steps. Only termination masks the Bellman bootstrap.
 
 ## Checkpoints and logs
 
-`latest.pt` is written atomically every `--checkpoint-interval` steps and when
-training finishes, is interrupted with Ctrl-C, or fails. It holds the
-configuration, network and optimizer states, counters and RNG states, and is
-loaded with `torch.load(weights_only=True)`. The replay buffer is not saved;
-after resume training continues once it holds one batch again.
+`<agent>_16f.pt` is written atomically and holds the network and optimizer
+states, the exploration rate and the step and episode counters. It is loaded
+with `torch.load(weights_only=True)`. The replay buffer is not saved; after a
+restart training continues once it holds one batch again.
 
-`metrics.jsonl` records losses, exploration rate, episode returns and elapsed
-time. Closing the environment stops the car and pauses the simulator.
+`metrics.jsonl` records each episode's steps, return, exploration rate and the
+last loss. Closing the environment stops the car and pauses the simulator.

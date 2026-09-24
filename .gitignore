@@ -19,7 +19,7 @@ ehthumbs.db
 Thumbs.db
 
 # ROS 2 development workspace
-.ros2/
+.colcon/
 __pycache__/
 .pytest_cache/
 *.egg-info/
@@ -31,3 +31,6 @@ runs/
 
 # Local scratch and test scripts
 tmp/
+overlay/*
+*.h5
+*.hdf5
