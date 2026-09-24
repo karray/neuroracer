@@ -12,8 +12,6 @@ from utils import preprocess, loginfo
 
 
 class Learner(threading.Thread):
-    """Replays the agent's buffer continuously while NeuroRacer.run collects, from the
-    moment it holds one batch."""
     def __init__(self, agent):
         super(Learner, self).__init__(name='learner', daemon=True)
         self.agent = agent
@@ -31,14 +29,13 @@ class Learner(threading.Thread):
     def stop(self):
         self.stopping.set()
         if self.ident is not None:
-            self.join()  # Finishes the current replay.
+            self.join()
 
 
 class NeuroRacer:
     def __init__(self, agent_class, sample_batch_size, n_frames, buffer_max_size, chunk_size, add_flipped,
                  env_id='NeuroRacer-v0', working_dir='.', max_episode_steps=1200):
         self.sample_batch_size = sample_batch_size
-        # Episodes that reach the limit are truncated: their last state is not terminal.
         self.env               = gym.make(env_id, max_episode_steps=max_episode_steps)
 
         self.highest_reward    = -np.inf
@@ -46,7 +43,7 @@ class NeuroRacer:
         self.n_frames = n_frames
 
         self.img_y_offset = 200
-        self.img_size = 224  # resnet18's native input size
+        self.img_size = 224
 
         self.state_size        = (self.img_size, self.img_size, n_frames)
         loginfo("State size")
@@ -104,14 +101,12 @@ class NeuroRacer:
                     steps+=1
                     episode_steps+=1
 
-                    # The frames' RGB channels, oldest first, as the replay buffer stacks them.
                     action = self.agent.act(np.expand_dims(np.concatenate(stacked_states, axis=0), axis=0))
 
                     next_state, reward, terminated, truncated, _ = self.env.step(action)
                     done = terminated or truncated
                     next_state = preprocess(next_state, self.img_y_offset, self.img_size)
 
-                    # Only termination (a crash) cuts the return; the stacks are rebuilt from the buffer's frames.
                     self.agent.buffer.append(action, next_state, reward, terminated)
                     stacked_states.append(next_state)
 
@@ -119,7 +114,6 @@ class NeuroRacer:
                     progress['steps'] += 1
 
                     if steps % self.sample_batch_size == 0:
-                        # Once per sample batch, as the original replay did; training runs continuously in Learner.
                         self.agent.save_requested = True
                         if steps >= n_steps:
                             do_training = False

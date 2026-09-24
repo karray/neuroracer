@@ -16,7 +16,6 @@ env_id = 'NeuroRacer-v1'
 
 
 class OrnsteinUhlenbeckProcess:
-    """keras-rl's OrnsteinUhlenbeckProcess."""
     def __init__(self, theta, mu=0., sigma=1., dt=1e-2, size=1):
         self.theta, self.mu, self.sigma, self.dt, self.size = theta, mu, sigma, dt, size
         self.x_prev = np.zeros(size)
@@ -29,7 +28,6 @@ class OrnsteinUhlenbeckProcess:
 
 
 def resnet18(frames, outputs):
-    # RGB frames; GroupNorm instead of BatchNorm, which is unstable at batch size 16.
     return timm.create_model('resnet18', pretrained=False, in_chans=3 * frames, num_classes=outputs, norm_layer=GroupNorm)
 
 
@@ -59,9 +57,9 @@ class Agent:
         self.learning_rate_actor = 0.0001
         self.learning_rate_critic = 0.001
         self.gamma              = 0.9
-        self.exploration_rate   = None  # Exploration is the OU noise.
+        self.exploration_rate   = None
         self.nb_steps_warmup    = 500
-        self.ema_decay          = 0.999  # target_model_update=.001
+        self.ema_decay          = 0.999
         self.l2 = 0.01
         self.device             = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.progress           = {'steps': 0, 'episodes': 0}
@@ -72,7 +70,6 @@ class Agent:
 
         self.actor = self._create_actor().to(self.device)
         self.critic = self._create_critic().to(self.device)
-        # Target networks, EMAs of the weights; the car drives with the target actor.
         self.target_actor = EMA(self.actor, self.ema_decay)
         self.target_critic = EMA(self.critic, self.ema_decay)
         self.actor.optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.learning_rate_actor, eps=1e-7)
@@ -122,7 +119,7 @@ class Agent:
     def _optimize(self, model, loss):
         model.optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)  # clipnorm=1.
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
         model.optimizer.step()
 
     def replay(self):
@@ -141,7 +138,6 @@ class Agent:
             with autocast(self.device):
                 values = self.critic(states, actions)
             critic_loss = nn.functional.mse_loss(values.float(), targets)
-            # kernel_regularizer=l2(0.01) on every critic layer
             critic_loss = critic_loss + self.l2 * sum(module.weight.pow(2).sum() for module in self.critic.modules()
                                                       if isinstance(module, (nn.Conv2d, nn.Linear)))
             self._optimize(self.critic, critic_loss)

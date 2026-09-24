@@ -3,7 +3,6 @@ project(neuroracer_gym_rl)
 
 find_package(ament_cmake REQUIRED)
 
-# Scripts import each other from their directory, as in the catkin package.
 install(PROGRAMS
   scripts/training.py
   scripts/ddpg.py

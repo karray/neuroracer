@@ -68,5 +68,4 @@ class NeuroRacerDiscreteTask(neuroracer_env.NeuroRacerEnv):
             self.right_left+=1
 
         self.last_action = action
-        # The environment then advances the paused world by one 0.1 s step.
         self.steering(steering_angle, self.speed)

@@ -36,7 +36,6 @@ class Agent():
         self.save_requested     = False
         self.loss               = None
         self.model              = self._build_model()
-        # The target network, an EMA of the model's weights; the car drives with it.
         self.target_model       = EMA(self.model, self.ema_decay)
         self._load_model()
 
@@ -44,8 +43,6 @@ class Agent():
     def _build_model(self):
         frames = self.state_size[2]
 
-        # Standard resnet18 (average pooling, linear head to the Q-values), with GroupNorm
-        # instead of BatchNorm so the network does not depend on batch statistics.
         model = nn.Sequential(
             Normalize(),
             timm.create_model('resnet18', pretrained=False, in_chans=3 * frames, num_classes=self.action_size,
@@ -73,8 +70,6 @@ class Agent():
 
     @property
     def exploration_rate(self):
-        # Linear from exploration_start to exploration_min over the first exploration_steps
-        # collected steps; a resumed run continues where it stopped.
         fraction = min(self.progress['steps'] / self.exploration_steps, 1.0)
         return self.exploration_start + fraction * (self.exploration_min - self.exploration_start)
 
@@ -85,23 +80,20 @@ class Agent():
         return int(act_values[0].argmax())
 
     def flip(self, batch, mirrored):
-        """The transitions where `mirrored` is set, flipped left-right: steering right becomes left."""
         flip = lambda images: torch.where(mirrored[:, None, None, None], images.flip(-1), images)
         return {**batch, 'actions': torch.where(mirrored, 2-batch['actions'], batch['actions']),
                 'states': flip(batch['states']), 'next_states': flip(batch['next_states'])}
 
     def _loss(self, batch, mirrored):
-        """Summed Huber loss of the taken actions' Q-values against Double DQN targets."""
         if self.add_flipped:
             batch = self.flip(batch, mirrored)
         actions, states, next_states, rewards, terminates = \
             batch['actions'].long(), batch['states'], batch['next_states'], batch['rewards'], batch['terminates']
 
         with torch.no_grad(), autocast(self.device):
-            # Double DQN: the model selects the next action, the EMA target network evaluates it.
+            # Double DQN
             next_actions = self.model(next_states).argmax(dim=1, keepdim=True)
             next_pred = self.target_model.module(next_states).float().gather(1, next_actions).squeeze(1)
-        # Waiting here too keeps each GPU pass short for the driving policy (see utils.fit).
         targets = rewards + self.gamma * wait_for_gpu(next_pred) * ~terminates
 
         with autocast(self.device):

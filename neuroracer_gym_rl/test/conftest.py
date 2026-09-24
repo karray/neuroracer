@@ -1,5 +1,5 @@
 import os
 import sys
 
-# The scripts import each other by module name, as installed side by side in lib/.
+# The scripts import each other by module name.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))

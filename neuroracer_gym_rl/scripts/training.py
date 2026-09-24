@@ -30,8 +30,6 @@ def main(argv=None):
     module = __import__(agent_name)
     agent_class = getattr(module, 'Agent')
 
-    # Frames are stored once (224x224 RGB, 150 KB per transition), so the buffer takes up
-    # to 150 GB of disk; a 5,000-transition chunk takes 750 MB of GPU memory.
     game = NeuroRacer(agent_class, \
                       sample_batch_size=1000, \
                       n_frames=args.frames, \

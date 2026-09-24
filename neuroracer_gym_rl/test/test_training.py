@@ -41,7 +41,6 @@ def test_buffer_blocks_rebuild_frame_stacks(tmp_path):
         batch = block.batch(block.transitions)
         for index, reward in enumerate(batch['rewards'].tolist()):
             states, next_states, action, terminate = expected[reward]
-            # States stack the frames' RGB channels, oldest first.
             assert batch['states'][index].shape == (9, 2, 2)
             assert batch['states'][index][::3, 0, 0].tolist() == states
             assert batch['next_states'][index][::3, 0, 0].tolist() == next_states
@@ -79,7 +78,6 @@ def test_replay_trains_saves_and_resumes(name, tmp_path):
     agent.replay()
     assert np.isfinite(agent.loss) and not agent.save_requested
     assert any(not torch.equal(old, new) for old, new in zip(before, model.parameters()))
-    # The EMA, which the car drives with, follows the model after every optimizer step.
     ema_after = list(ema.module.parameters())
     assert any(not torch.equal(old, new) for old, new in zip(ema_before, ema_after))
     assert any(not torch.equal(a, b) for a, b in zip(ema_after, model.parameters()))
@@ -96,7 +94,7 @@ def test_replay_trains_saves_and_resumes(name, tmp_path):
     assert resumed.progress['steps'] == 24
     assert all(torch.equal(a, b) for a, b in zip(resumed_model.parameters(), model.parameters()))
     assert all(torch.equal(a, b) for a, b in zip(resumed_ema.module.parameters(), ema.module.parameters()))
-    assert resumed.exploration_rate == agent.exploration_rate  # The schedule continues.
+    assert resumed.exploration_rate == agent.exploration_rate
     resumed.buffer.close()
 
 
@@ -120,7 +118,6 @@ def test_mirrored_transitions_swap_left_and_right(tmp_path):
 
 
 class CameraEnv(gym.Env):
-    """Deterministic image environment for the collection loop without ROS."""
     def __init__(self, limit=5):
         self.action_space = gym.spaces.Discrete(3)
         self.observation_space = gym.spaces.Box(0, 255, (480, 640, 3), np.uint8)
@@ -135,7 +132,7 @@ class CameraEnv(gym.Env):
 
     def step(self, action):
         assert self.action_space.contains(action)
-        time.sleep(0.02)  # A simulator step takes tens of milliseconds.
+        time.sleep(0.02)
         self.count += 1
         return np.full(self.observation_space.shape, self.count, np.uint8), 1.0, self.count >= self.limit, False, {}
 
@@ -158,7 +155,7 @@ def test_learner_trains_while_collecting_and_run_resumes(tmp_path):
     game.run(20)
     agent = game.agent
     assert agent.progress == {'steps': 20, 'episodes': 4}
-    assert agent.loss is not None  # Trained from the first batch, beside collection.
+    assert agent.loss is not None
     assert agent.exploration_rate == pytest.approx(1 - 0.99 * 20 / 50000)
     assert game.env.unwrapped.closed and not (tmp_path / 'buffer.hdf5').exists()
     assert len(open(tmp_path / 'metrics.jsonl').readlines()) == 4

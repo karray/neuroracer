@@ -12,32 +12,25 @@ from torch import nn
 from timm.utils import ModelEmaV3
 
 loginfo = partial(print, flush=True)
-# Largest batch per GPU pass while training: long passes would delay the driving policy's.
+# Short GPU passes while training, so the driving policy is not delayed.
 micro_batch_size = 16
 
 
 def preprocess(img, y_offset, size, interpolation=cv2.INTER_AREA):
-    """The BGR camera image without its top `y_offset` rows, as a size x size RGB image,
-    channels first. uint8, so the replay buffer stores one byte per value; Normalize scales it."""
     img = cv2.resize(img[y_offset:,:], (size, size), interpolation=interpolation)
     return np.ascontiguousarray(img[:, :, ::-1].transpose(2, 0, 1))
 
 
 class H5Buffer():
-    """Cyclic replay buffer in an HDF5 file, so its size is limited by disk, not RAM.
-
-    Each preprocessed RGB frame is stored once: a row that starts an episode holds its first
-    frame; every other row holds the frame after a transition, with that transition's
-    action, reward and termination. `sample` reads a random contiguous block, which HDF5
-    serves much faster than scattered rows, and the block rebuilds the frame stacks.
-    """
+    # A row that starts an episode holds its first frame; every other row holds the frame
+    # after a transition, with that transition's action, reward and termination.
     def __init__(self, state_shape, maxlen, path='buffer.hdf5', action_shape=(), action_dtype=np.ubyte):
         self.maxlen = maxlen
         self.current_idx = 0
         self.size = 0
         self.n_frames = state_shape[2]
         self.path = path
-        self.lock = threading.Lock()  # The learner samples while the collector appends.
+        self.lock = threading.Lock()
 
         self.file = h5py.File(path, "w")
 
@@ -64,12 +57,10 @@ class H5Buffer():
         self._write(next_frame, False, action, float(reward), bool(terminate))
 
     def sample(self, n_samples, device='cpu'):
-        """A random block of up to `n_samples` consecutive rows, and the frames before it, on `device`."""
         history = self.n_frames
         with self.lock:
             full = self.size == self.maxlen
-            oldest = self.current_idx if full else 0  # Rows are counted from the oldest one.
-            # Once rows are overwritten, the oldest ones lack the frames before them.
+            oldest = self.current_idx if full else 0
             low = history if full else 0
             n_samples = min(n_samples, self.size - low)
             start_idx = np.random.randint(low, self.size - n_samples + 1)
@@ -83,7 +74,6 @@ class H5Buffer():
                 return np.concatenate((dataset[first:], dataset[:first + count - self.maxlen]))
 
             rows = [read(dataset) for dataset in (self.frames, self.first, self.actions, self.rewards, self.terminates)]
-        # Copied to the device outside the lock, so the collector can append meanwhile.
         return Block(*rows, start_idx - begin_idx, history, device)
 
     def length(self):
@@ -100,12 +90,8 @@ class H5Buffer():
 
 
 class Block():
-    """Consecutive replay rows on the training device; states are rebuilt there from single
-    frames, so batches are never copied from the host. A state stacks the RGB channels of
-    its frames, oldest first: (3 * frames, height, width)."""
     def __init__(self, frames, first, actions, rewards, terminates, offset, history, device='cpu'):
         rows = np.arange(len(first))
-        # Transitions are the non-first rows of the block proper; their states end one row earlier.
         transitions = rows[offset:][~first[offset:] & (rows[offset:] > 0)]
         # Stacks repeat an episode's first frame rather than reach into the previous episode.
         episode_start = np.maximum.accumulate(np.where(first, rows, 0))
@@ -126,32 +112,22 @@ class Block():
 
 
 class Normalize(nn.Module):
-    """uint8 frames to [0, 1], as the original preprocess did."""
     def forward(self, states):
         return states.float() / 255.0
 
 
 def autocast(device):
-    """bf16 mixed precision on the GPU; weights, optimizer states and losses stay fp32."""
     return torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == 'cuda')
 
 
 def wait_for_gpu(tensor):
-    # Keeps the learner's queue of GPU work short: CUDA queues work from all threads in
-    # order, so a long queue would delay every action of the driving policy.
+    # CUDA runs queued work in order, so a long queue would delay the driving policy.
     if tensor.is_cuda:
         torch.cuda.current_stream(tensor.device).synchronize()
     return tensor
 
 
 def fit(model, block, rows, loss, batch_size, flipped=False, ema=None):
-    """One shuffled epoch over the transitions `rows` of `block`. `loss(batch, mirrored)`
-    returns a micro-batch's summed loss; with `flipped`, every row appears a second time
-    with `mirrored` set, for a left-right mirrored copy.
-
-    Each batch's gradient is summed over micro-batches before the optimizer step: the same
-    update, but in short GPU kernels between which the driving policy can run. `ema`
-    follows every optimizer step."""
     model.train()
     order = torch.randperm(len(rows) * (2 if flipped else 1), device=rows.device)
     for start in range(0, len(order), batch_size):
@@ -169,12 +145,10 @@ def fit(model, block, rows, loss, batch_size, flipped=False, ema=None):
 
 
 class EMA():
-    """Exponential moving average of a model's weights (timm's ModelEmaV3), updated after
-    every optimizer step. It is the target network and the network the car drives with."""
     def __init__(self, model, decay):
         self.ema = ModelEmaV3(model, decay=decay)
         self.module = self.ema.module
-        self.lock = threading.Lock()  # The collector acts while the learner updates.
+        self.lock = threading.Lock()
 
     def update(self, model):
         with self.lock:
@@ -186,7 +160,7 @@ class EMA():
 
 
 def save_checkpoint(path, **state):
-    # Write then rename, so Ctrl-C during a save never leaves a truncated checkpoint.
+    # Write then rename, so Ctrl-C never leaves a truncated checkpoint.
     temporary = path + '.tmp'
     torch.save(state, temporary)
     os.replace(temporary, path)

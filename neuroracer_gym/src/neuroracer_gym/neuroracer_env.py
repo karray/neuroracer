@@ -24,19 +24,12 @@ default_timeout = 30.0
 WHEELBASE = 0.325
 WHEEL_RADIUS = 0.05
 STEP_SIZE = 0.001  # racecar_tunnel.sdf max_step_size
-PERIOD = 0.1  # Environment step and sensor/odometry update period (model.sdf)
-# Spawn pose (racecar_tunnel.sdf), facing along the tunnel.
+PERIOD = 0.1  # model.sdf sensor update period
+# racecar_tunnel.sdf spawn pose
 SPAWN_POSITION = {'p_x': 2.0, 'p_y': 3.7, 'p_z': 0.05, 'o_x': 0.0, 'o_y': 0.0,
                   'o_z': math.sin(math.pi / 4), 'o_w': math.cos(math.pi / 4)}
 
 class NeuroRacerEnv(gym.Env):
-    """The simulator is started separately (scripts/dev sim or web). Every wait has a
-    wall-clock deadline so a paused or crashed simulator cannot block training forever.
-
-    openai_ros' RobotGazeboEnv has no ROS 2 port, so its step()/reset() template and
-    the Gazebo pause/step calls live here. The world stays paused; each step advances
-    exactly one 0.1 s sensor period.
-    """
     def __init__(self):
 
         self.initial_position = None
@@ -75,8 +68,7 @@ class NeuroRacerEnv(gym.Env):
         self.node.get_logger().debug("Finished NeuroRacerEnv INIT...")
 
     def reset_position(self):
-        # A Gazebo Jetty world reset would recreate plugins without a Reset hook while
-        # their callbacks run, so the car is always teleported, by default to its spawn.
+        # Teleport: a Gazebo Jetty world reset recreates plugins without a Reset hook.
         position = self.initial_position or SPAWN_POSITION
         q = np.array([position['o_x'], position['o_y'], position['o_z'], position['o_w']], dtype=np.float64)
         q /= np.linalg.norm(q)
@@ -95,7 +87,7 @@ class NeuroRacerEnv(gym.Env):
         super(NeuroRacerEnv, self).reset(seed=seed)
         self._check_publishers_connection()
         self._set_init_pose()
-        for _ in range(3):  # Brake from speed to rest; a teleport keeps velocities.
+        for _ in range(3):  # A teleport keeps velocities, so brake first.
             self._advance()
         self.reset_position()
         self._advance()
@@ -130,9 +122,6 @@ class NeuroRacerEnv(gym.Env):
             self.context.shutdown()
             self.closed = True
 
-    # Gazebo connection
-    # ----------------------------
-
     def _wait(self, predicate, description):
         deadline = time.monotonic() + self.timeout
         while not predicate():
@@ -159,15 +148,12 @@ class NeuroRacerEnv(gym.Env):
         return self.camera_time, self.laser_time, self.odom_time
 
     def _advance(self):
-        # Step exactly one sensor period of physics while paused; unpausing overshoots by
-        # the service round-trip, so actions would last a variable, load-dependent time.
+        # Stepping while paused makes every action last exactly one period.
         previous = self._stamps()
         request = ControlWorld.Request()
         request.world_control.pause = True
         request.world_control.multi_step = round(PERIOD / STEP_SIZE)
         self._call(self.control, request)
-        # Each period holds exactly one 10 Hz camera, lidar and odometry update; nothing
-        # else arrives while paused.
         self._wait(lambda: all(now >= before + PERIOD - STEP_SIZE / 2
                                for now, before in zip(self._stamps(), previous)),
                    'camera, lidar, and odometry')
@@ -213,7 +199,6 @@ class NeuroRacerEnv(gym.Env):
         Checks that all the publishers are working
         :return:
         """
-        # Unmatched topics would miss the sensor messages of a paused step.
         self._wait(lambda: self.drive_control_publisher.get_subscription_count() > 0
                    and all(s.get_publisher_count() > 0 for s in self.subscriptions), 'ROS/Gazebo bridge')
         self.node.get_logger().debug("All Publishers READY")
@@ -247,8 +232,7 @@ class NeuroRacerEnv(gym.Env):
         return self._episode_done
 
     def _create_steering_command(self, steering_angle, speed):
-        # Gazebo's Ackermann steering takes a Twist. racecar_control's servo_commands.py
-        # drove the wheels at speed / 0.1 rad/s; the wheel radius is 0.05 m.
+        # racecar_control's servo_commands.py: wheel rate = speed / 0.1.
         command = Twist()
         command.linear.x = float(speed) / 0.1 * WHEEL_RADIUS
         # angular.z is the yaw rate, not the steering angle.
@@ -264,7 +248,6 @@ class NeuroRacerEnv(gym.Env):
         return np.array(self.laser_scan.ranges, dtype=np.float32)
 
     def get_camera_image(self):
-        # BGR, as the original compressed camera stream was decoded.
         return self.bridge.imgmsg_to_cv2(self.camera_msg, desired_encoding='bgr8')
 
     def _is_collided(self):
