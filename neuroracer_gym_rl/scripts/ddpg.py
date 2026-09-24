@@ -10,7 +10,7 @@ from torch import nn
 import timm
 from timm.layers import GroupNorm
 
-from utils import H5Buffer, Normalize, EMA, autocast, save_checkpoint, load_checkpoint, loginfo
+from utils import ReplayBuffer, Normalize, EMA, autocast, to_device, save_checkpoint, load_checkpoint, loginfo
 
 env_id = 'NeuroRacer-v1'
 
@@ -45,14 +45,13 @@ class Critic(nn.Module):
 
 
 class Agent:
-    def __init__(self, state_size, action_size, buffer_max_size, chunk_size, add_flipped, working_dir='.'):
+    def __init__(self, state_size, action_size, buffer_max_size, add_flipped, working_dir='.'):
         self.weight_backup      = os.path.join(working_dir, 'ddpg_{}f.pt'.format(state_size[2]))
 
         self.state_size = state_size
         self.nb_actions  = action_size
-        self.chunk_size = chunk_size
         self.batch_size = 16
-        self.buffer = H5Buffer(state_size, buffer_max_size, os.path.join(working_dir, 'buffer.hdf5'),
+        self.buffer = ReplayBuffer(state_size, buffer_max_size, os.path.join(working_dir, 'buffer'),
                                action_shape=(action_size,), action_dtype=np.float32)
         self.learning_rate_actor = 0.0001
         self.learning_rate_critic = 0.001
@@ -63,7 +62,6 @@ class Agent:
         self.l2 = 0.01
         self.device             = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.progress           = {'steps': 0, 'episodes': 0}
-        self.save_requested     = False
         self.loss               = None
 
         self.random_process = OrnsteinUhlenbeckProcess(size=self.nb_actions, theta=.15, mu=0., sigma=.2)
@@ -104,7 +102,6 @@ class Agent:
         return model
 
     def save_model(self):
-        self.save_requested = False
         save_checkpoint(self.weight_backup, actor=self.actor.state_dict(), critic=self.critic.state_dict(),
                         target_actor=self.target_actor.module.state_dict(), target_critic=self.target_critic.module.state_dict(),
                         actor_optimizer=self.actor.optimizer.state_dict(),
@@ -122,34 +119,28 @@ class Agent:
         nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
         model.optimizer.step()
 
-    def replay(self):
+    def replay(self, batch):
         if self.buffer.length() < self.nb_steps_warmup:
             return False
-        block = self.buffer.sample(self.chunk_size, self.device)
-        rows = block.transitions[torch.randperm(len(block.transitions), device=self.device)]
+        batch = to_device(batch, self.device)
+        states, actions = batch['states'], batch['actions']
         self.actor.train()
         self.critic.train()
-        for start in range(0, len(rows), self.batch_size):
-            batch = block.batch(rows[start:start + self.batch_size])
-            states, actions = batch['states'], batch['actions']
-            with torch.no_grad(), autocast(self.device):
-                next_values = self.target_critic.module(batch['next_states'], self.target_actor.module(batch['next_states'])).float()
-                targets = batch['rewards'] + self.gamma * (~batch['terminates']).float() * next_values
-            with autocast(self.device):
-                values = self.critic(states, actions)
-            critic_loss = nn.functional.mse_loss(values.float(), targets)
-            critic_loss = critic_loss + self.l2 * sum(module.weight.pow(2).sum() for module in self.critic.modules()
-                                                      if isinstance(module, (nn.Conv2d, nn.Linear)))
-            self._optimize(self.critic, critic_loss)
-            with autocast(self.device):
-                actor_loss = -self.critic(states, self.actor(states)).float().mean()
-            self._optimize(self.actor, actor_loss)
-            self.target_actor.update(self.actor)
-            self.target_critic.update(self.critic)
-            self.loss = float(critic_loss.detach())
-
-        if self.save_requested:
-            self.save_model()
+        with torch.no_grad(), autocast(self.device):
+            next_values = self.target_critic.module(batch['next_states'], self.target_actor.module(batch['next_states'])).float()
+            targets = batch['rewards'] + self.gamma * (~batch['terminates']).float() * next_values
+        with autocast(self.device):
+            values = self.critic(states, actions)
+        critic_loss = nn.functional.mse_loss(values.float(), targets)
+        critic_loss = critic_loss + self.l2 * sum(module.weight.pow(2).sum() for module in self.critic.modules()
+                                                  if isinstance(module, (nn.Conv2d, nn.Linear)))
+        self._optimize(self.critic, critic_loss)
+        with autocast(self.device):
+            actor_loss = -self.critic(states, self.actor(states)).float().mean()
+        self._optimize(self.actor, actor_loss)
+        self.target_actor.update(self.actor)
+        self.target_critic.update(self.critic)
+        self.loss = float(critic_loss.detach())
 
 
 if __name__ == '__main__':

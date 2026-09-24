@@ -34,7 +34,6 @@ def main(argv=None):
                       sample_batch_size=1000, \
                       n_frames=args.frames, \
                       buffer_max_size=1000000, \
-                      chunk_size=5000, \
                       add_flipped=False, \
                       env_id=getattr(module, 'env_id', 'NeuroRacer-v0'), \
                       working_dir=args.output or 'runs/' + agent_name, \

@@ -1,4 +1,6 @@
+import math
 import os
+import pickle
 import time
 
 import numpy as np
@@ -6,8 +8,9 @@ import pytest
 import torch
 import gymnasium as gym
 
-from utils import H5Buffer, preprocess
-from neuroracer_discrete import NeuroRacer
+import utils
+from utils import ReplayBuffer, ReplayDataset, ReplaySampler, loader, preprocess, load_checkpoint
+from neuroracer_discrete import Learner, NeuroRacer
 
 AGENTS = ('dqn', 'ddpg')
 
@@ -21,11 +24,11 @@ def test_preprocess_crops_resizes_and_converts_bgr_to_rgb():
     assert (frame[2] == 50).all() and frame[:2].max() == 0
 
 
-def test_buffer_blocks_rebuild_frame_stacks(tmp_path):
-    buffer = H5Buffer((2, 2, 3), 12, str(tmp_path / 'buffer.hdf5'))
+def test_buffer_rebuilds_frame_stacks_and_skips_overwritten_rows(tmp_path):
+    buffer = ReplayBuffer((2, 2, 3), 12, str(tmp_path / 'buffer'))
     frame = lambda value: np.full((3, 2, 2), value, np.uint8)
     expected, value = {}, 0
-    for length in (2, 5, 1, 6):  # 18 rows wrap the 12-row buffer.
+    for length in (2, 5, 1, 6):  # 18 rows wrap the 12-row buffer; row n holds value n.
         state = [value] * 3
         buffer.start_episode(frame(value))
         for step in range(length):
@@ -35,48 +38,55 @@ def test_buffer_blocks_rebuild_frame_stacks(tmp_path):
             expected[value] = (state, next_state, value % 3, step == length - 1)
             state = next_state
         value += 1
+    # Another process maps the same files.
+    dataset = ReplayDataset(pickle.loads(pickle.dumps(buffer)))
     seen = set()
-    for _ in range(50):
-        block = buffer.sample(4)
-        batch = block.batch(block.transitions)
-        for index, reward in enumerate(batch['rewards'].tolist()):
-            states, next_states, action, terminate = expected[reward]
-            assert batch['states'][index].shape == (9, 2, 2)
-            assert batch['states'][index][::3, 0, 0].tolist() == states
-            assert batch['next_states'][index][::3, 0, 0].tolist() == next_states
-            assert (batch['actions'][index].item(), batch['terminates'][index].item()) == (action, terminate)
-            seen.add(reward)
-    # Transitions whose earlier frames were overwritten are never sampled.
+    for n in expected:
+        item = dataset[n]
+        if item is None:
+            continue
+        states, next_states, action, terminate = expected[n]
+        assert item['states'].shape == (9, 2, 2)
+        assert item['states'][::3, 0, 0].tolist() == states
+        assert item['next_states'][::3, 0, 0].tolist() == next_states
+        assert (item['actions'].item(), item['rewards'].item(), item['terminates'].item()) == (action, n, terminate)
+        seen.add(n)
+    # Transitions whose earlier frames were overwritten are never returned or sampled.
     assert seen == {10, 12, 13, 14, 15, 16, 17}
+    batches = iter(ReplaySampler(buffer, 64))
+    assert all(set(next(batches)) <= seen for _ in range(10))
     buffer.close()
-    assert not (tmp_path / 'buffer.hdf5').exists()
+    assert not (tmp_path / 'buffer').exists()
 
 
-def make_agent(name, working_dir, **kwargs):
-    module = __import__(name)
-    action_size = 1 if name == 'ddpg' else 3
-    agent = module.Agent((64, 64, 2), action_size, 64, 16, add_flipped=name == 'dqn', working_dir=str(working_dir), **kwargs)
+def make_agent(name, working_dir):
+    agent = __import__(name).Agent((64, 64, 2), 1 if name == 'ddpg' else 3, 64, add_flipped=name == 'dqn',
+                                   working_dir=str(working_dir))
     agent.batch_size, agent.nb_steps_warmup = 4, 0
     return agent
 
 
-@pytest.mark.parametrize('name', AGENTS)
-def test_replay_trains_saves_and_resumes(name, tmp_path):
-    agent = make_agent(name, tmp_path)
+def fill_buffer(name, buffer):
     rng = np.random.default_rng(0)
     for episode in range(3):
-        agent.buffer.start_episode(rng.integers(0, 256, (3, 64, 64), dtype=np.uint8))
+        buffer.start_episode(rng.integers(0, 256, (3, 64, 64), dtype=np.uint8))
         for step in range(8):
             action = np.float32([rng.uniform(-1, 1)]) if name == 'ddpg' else int(rng.integers(3))
-            agent.buffer.append(action, rng.integers(0, 256, (3, 64, 64), dtype=np.uint8), 1.0, step == 7)
+            buffer.append(action, rng.integers(0, 256, (3, 64, 64), dtype=np.uint8), 1.0, step == 7)
+
+
+@pytest.mark.parametrize('name', AGENTS)
+def test_replay_trains_saves_and_resumes(name, tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, 'loader_workers', 0)
+    agent = make_agent(name, tmp_path)
+    fill_buffer(name, agent.buffer)
+    rng = np.random.default_rng(0)
     model = agent.actor if name == 'ddpg' else agent.model
     ema = agent.target_actor if name == 'ddpg' else agent.target_model
     before = [parameter.detach().clone() for parameter in model.parameters()]
     ema_before = [parameter.detach().clone() for parameter in ema.module.parameters()]
-    agent.progress['steps'] = 24
-    agent.save_requested = True
-    agent.replay()
-    assert np.isfinite(agent.loss) and not agent.save_requested
+    agent.replay(next(iter(loader(agent.buffer, agent.batch_size))))
+    assert np.isfinite(agent.loss)
     assert any(not torch.equal(old, new) for old, new in zip(before, model.parameters()))
     ema_after = list(ema.module.parameters())
     assert any(not torch.equal(old, new) for old, new in zip(ema_before, ema_after))
@@ -87,6 +97,8 @@ def test_replay_trains_saves_and_resumes(name, tmp_path):
     else:
         assert action in (0, 1, 2)
     agent.buffer.close()
+    agent.progress['steps'] = 24
+    agent.save_model()
 
     resumed = make_agent(name, tmp_path)
     resumed_model = resumed.actor if name == 'ddpg' else resumed.model
@@ -149,19 +161,36 @@ def small_dqn(*args, **kwargs):
     return agent
 
 
-def test_learner_trains_while_collecting_and_run_resumes(tmp_path):
-    game = NeuroRacer(small_dqn, sample_batch_size=10, n_frames=2, buffer_max_size=100, chunk_size=16,
+def test_run_saves_progress_and_resumes(tmp_path):
+    game = NeuroRacer(small_dqn, sample_batch_size=10, n_frames=2, buffer_max_size=100,
                       add_flipped=False, env_id='CameraEnv-v0', working_dir=str(tmp_path))
     game.run(20)
-    agent = game.agent
-    assert agent.progress == {'steps': 20, 'episodes': 4}
-    assert agent.loss is not None
-    assert agent.exploration_rate == pytest.approx(1 - 0.99 * 20 / 50000)
-    assert game.env.unwrapped.closed and not (tmp_path / 'buffer.hdf5').exists()
+    assert game.agent.progress == {'steps': 20, 'episodes': 4}
+    assert game.env.unwrapped.closed and not (tmp_path / 'buffer').exists()
     assert len(open(tmp_path / 'metrics.jsonl').readlines()) == 4
 
-    game = NeuroRacer(small_dqn, sample_batch_size=10, n_frames=2, buffer_max_size=100, chunk_size=16,
+    game = NeuroRacer(small_dqn, sample_batch_size=10, n_frames=2, buffer_max_size=100,
                       add_flipped=False, env_id='CameraEnv-v0', working_dir=str(tmp_path))
     assert game.agent.progress == {'steps': 20, 'episodes': 4}
     assert game.agent.exploration_rate == pytest.approx(1 - 0.99 * 20 / 50000)
     game.agent.buffer.close()
+
+
+def test_learner_trains_the_shared_agent_in_its_own_process(tmp_path):
+    agent = make_agent('dqn', tmp_path)
+    fill_buffer('dqn', agent.buffer)
+    ema_before = [parameter.clone() for parameter in agent.target_model.module.parameters()]
+    learner = Learner(agent)
+    learner.start()
+    deadline = time.time() + 60
+    while math.isnan(learner.loss.value) and learner.exitcode is None and time.time() < deadline:
+        time.sleep(0.1)
+    learner.stop({'steps': 24, 'episodes': 3})
+    assert learner.exitcode == 0 and np.isfinite(learner.loss.value)
+    # The car's agent drives with the weights the learner updated.
+    assert any(not torch.equal(old, new) for old, new in zip(ema_before, agent.target_model.module.parameters()))
+    checkpoint = load_checkpoint(agent.weight_backup)
+    assert checkpoint['progress'] == {'steps': 24, 'episodes': 3}
+    assert all(torch.equal(saved.to(new.device), new) for saved, new in
+               zip(checkpoint['target_model'].values(), agent.target_model.module.parameters()))
+    agent.buffer.close()

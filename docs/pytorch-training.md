@@ -25,11 +25,39 @@ continues. Ctrl-C stops training and saves the model. `ddpg.py` or
 
 ## Training
 
-Transitions go to a replay buffer on disk (`<output>/buffer.hdf5`, 1,000,000
-transitions, up to 150 GB), which is deleted when training ends. A learner
-thread trains continuously on random contiguous chunks of 5,000 transitions,
-one shuffled epoch per chunk, while the car collects. The car drives with the
-EMA of the network's weights, which is also the target network.
+Training runs in two processes that share the agent:
+
+- The car's process steps the simulator, picks actions with the EMA of the
+  network's weights, writes each transition to the replay buffer and logs every
+  episode to `metrics.jsonl` in the output directory.
+- The learner process (`Learner` in `neuroracer_discrete.py`) trains the network
+  continuously on uniformly random batches that four `DataLoader` worker
+  processes read from the buffer. It updates the EMA, which is also the target
+  network, after each step and saves the checkpoint every 1,000 collected steps
+  and when training ends.
+
+They share:
+
+- The replay buffer: memory-mapped files in `<output>/buffer/` (1,000,000
+  transitions, up to 150 GB), deleted when training ends. The car writes and the
+  workers read. A transition that was overwritten while it was read is dropped
+  from its batch.
+- The agent's tensors, through CUDA IPC. The learner updates them in place and a
+  lock keeps the car from driving with a half-updated EMA.
+- The collected steps and episodes for the checkpoint, the latest loss, and the
+  save and stop signals.
+
+Side effects:
+
+- Both processes run at their own speed, so the number of updates per collected
+  step depends on the hardware. On an RTX 3060 Ti the car collects about 22
+  steps/s and the learner makes about 1.7 updates/s, so each transition is
+  sampled about 20 times on average.
+- The car drives with weights at most one update old, and a run is not
+  reproducible from `--seed`.
+- Ctrl-C stops the car's process, which lets the learner finish its update and
+  save.
+- The loss in `metrics.jsonl` is `NaN` until the first update.
 
 | Agent | Network | EMA decay | Batch | Loss |
 | --- | --- | --- | --- | --- |
@@ -39,9 +67,10 @@ EMA of the network's weights, which is also the target network.
 The networks are timm `resnet18` with GroupNorm, trained from scratch on 224×224
 RGB images (the camera image without its top 200 rows), 3 channels per frame.
 DQN explores with ε falling linearly from 1.0 to 0.01 over 50,000 steps, DDPG
-with Ornstein-Uhlenbeck noise.
-
-`metrics.jsonl` in the output directory records every episode.
+with Ornstein-Uhlenbeck noise. A batch is trained in micro-batches of 64 samples
+with accumulated gradients, the same update as one pass because GroupNorm
+normalizes each sample on its own. The learner then needs about 2.4 GB of GPU
+memory, where a whole batch of 256 needs about 7 GB.
 
 ## GPU
 
@@ -56,4 +85,5 @@ sudo systemctl restart docker
 ```
 
 `scripts/dev` adds `compose.gpu.yaml` when Docker has the NVIDIA runtime
-(`NEURORACER_GPU=0` opts out).
+(`NEURORACER_GPU=0` opts out). The two training processes share GPU memory
+through CUDA IPC, which WSL 2 does not support.

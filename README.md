@@ -4,7 +4,7 @@
 The goal of this project is to provide an easy-to-use framework that will allow to simulate a training of a self-driving car using Gymnasium, ROS 2 and Gazebo. The environment follows the architecture of the openai_ros package that was proposed by The Construct team.
 
 # Software requirements #
-* Linux amd64 with Docker Engine and Compose v2, about 15 GB of free disk space
+* Linux amd64 (not WSL 2) with Docker Engine and Compose v2, about 15 GB of free disk space
 * ROS 2 Lyrical, Gazebo Jetty, Python 3, Gymnasium and PyTorch (all installed in the Docker image)
 * Optional: an NVIDIA GPU with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
@@ -40,7 +40,7 @@ Start training in the second terminal:
 There are 2 implemented agents, both on a timm resnet18: `dqn` and `ddpg`. The same can be started with `ros2 launch neuroracer_gym_rl start.launch agent:=<agent name>` in `./scripts/dev shell`.
 See [training details](docs/pytorch-training.md).
 
-# WSL and headless setup #
+# Headless setup #
 The simulator is headless: Gazebo renders the camera with EGL (on the GPU when the container has one), so no X server is needed.
 
 ### Gazebo Web ###

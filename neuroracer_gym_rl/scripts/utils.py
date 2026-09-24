@@ -2,18 +2,22 @@
 
 from functools import partial
 import os
-import threading
+import shutil
 
 import cv2
-import h5py
 import numpy as np
 import torch
 from torch import nn
+import torch.multiprocessing as mp
+from torch.utils.data import DataLoader, Dataset, Sampler, default_collate
 from timm.utils import ModelEmaV3
 
 loginfo = partial(print, flush=True)
-# Short GPU passes while training, so the driving policy is not delayed.
-micro_batch_size = 16
+context = mp.get_context('spawn')
+# Samples per forward and backward pass; a whole batch of 256 needs about 7 GB of GPU memory.
+micro_batch_size = 64
+# Processes that read replay batches from disk.
+loader_workers = 4
 
 
 def preprocess(img, y_offset, size, interpolation=cv2.INTER_AREA):
@@ -21,34 +25,40 @@ def preprocess(img, y_offset, size, interpolation=cv2.INTER_AREA):
     return np.ascontiguousarray(img[:, :, ::-1].transpose(2, 0, 1))
 
 
-class H5Buffer():
+class ReplayBuffer():
     # A row that starts an episode holds its first frame; every other row holds the frame
     # after a transition, with that transition's action, reward and termination.
-    def __init__(self, state_shape, maxlen, path='buffer.hdf5', action_shape=(), action_dtype=np.ubyte):
+    # `count` is the number of rows written so far; row n is stored at n % maxlen.
+    def __init__(self, state_shape, maxlen, path='buffer', action_shape=(), action_dtype=np.ubyte):
         self.maxlen = maxlen
-        self.current_idx = 0
-        self.size = 0
         self.n_frames = state_shape[2]
         self.path = path
-        self.lock = threading.Lock()
+        os.makedirs(path, exist_ok=True)
 
-        self.file = h5py.File(path, "w")
+        def array(name, shape, dtype):
+            return np.lib.format.open_memmap(os.path.join(path, name + '.npy'), mode='w+', dtype=dtype, shape=shape)
+        self.frames = array('frames', (maxlen, 3) + state_shape[:2], np.uint8)
+        self.first = array('first', (maxlen,), np.bool_)
+        self.actions = array('actions', (maxlen,) + action_shape, action_dtype)
+        self.rewards = array('rewards', (maxlen,), np.float32)
+        self.terminates = array('terminates', (maxlen,), np.bool_)
+        self.count = array('count', (1,), np.int64)
 
-        def dataset(name, shape, dtype):
-            return self.file.create_dataset(name, (maxlen,)+shape, dtype=dtype, chunks=(min(64, maxlen),)+shape)
-        self.frames = dataset('frames', (3,) + state_shape[:2], np.uint8)
-        self.first = dataset('first', (), np.bool_)
-        self.actions = dataset('actions', action_shape, action_dtype)
-        self.rewards = dataset('rewards', (), np.float32)
-        self.terminates = dataset('terminates', (), np.bool_)
+    def __getstate__(self):
+        # Other processes map the same files instead of receiving a copy of them.
+        return {'maxlen': self.maxlen, 'n_frames': self.n_frames, 'path': self.path}
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        for name in ('frames', 'first', 'actions', 'rewards', 'terminates', 'count'):
+            setattr(self, name, np.load(os.path.join(self.path, name + '.npy'), mmap_mode='r'))
 
     def _write(self, frame, first, action=0, reward=0.0, terminate=False):
-        with self.lock:
-            idx = self.current_idx
-            self.frames[idx], self.first[idx], self.actions[idx] = frame, first, action
-            self.rewards[idx], self.terminates[idx] = reward, terminate
-            self.current_idx = (idx + 1) % self.maxlen
-            self.size = min(self.size + 1, self.maxlen)
+        # The row is complete before the count includes it.
+        idx = int(self.count[0]) % self.maxlen
+        self.frames[idx], self.first[idx], self.actions[idx] = frame, first, action
+        self.rewards[idx], self.terminates[idx] = reward, terminate
+        self.count[0] += 1
 
     def start_episode(self, frame):
         self._write(frame, True)
@@ -56,59 +66,68 @@ class H5Buffer():
     def append(self, action, next_frame, reward, terminate):
         self._write(next_frame, False, action, float(reward), bool(terminate))
 
-    def sample(self, n_samples, device='cpu'):
-        history = self.n_frames
-        with self.lock:
-            full = self.size == self.maxlen
-            oldest = self.current_idx if full else 0
-            low = history if full else 0
-            n_samples = min(n_samples, self.size - low)
-            start_idx = np.random.randint(low, self.size - n_samples + 1)
-            begin_idx = max(start_idx - history, 0)
-
-            def read(dataset):
-                first = (oldest + begin_idx) % self.maxlen
-                count = start_idx + n_samples - begin_idx
-                if first + count <= self.maxlen:
-                    return dataset[first:first + count]
-                return np.concatenate((dataset[first:], dataset[:first + count - self.maxlen]))
-
-            rows = [read(dataset) for dataset in (self.frames, self.first, self.actions, self.rewards, self.terminates)]
-        return Block(*rows, start_idx - begin_idx, history, device)
-
     def length(self):
-        return self.size
+        return min(int(self.count[0]), self.maxlen)
 
     def close(self):
-        if self.file:
-            self.file.close()
-            os.remove(self.path)
-        self.file = None
-
-    def __del__(self):
-        self.close()
+        if os.path.isdir(self.path):
+            shutil.rmtree(self.path)
 
 
-class Block():
-    def __init__(self, frames, first, actions, rewards, terminates, offset, history, device='cpu'):
-        rows = np.arange(len(first))
-        transitions = rows[offset:][~first[offset:] & (rows[offset:] > 0)]
+class ReplayDataset(Dataset):
+    """Transition n of the buffer, or None if the buffer overwrote it while it was read."""
+    def __init__(self, buffer):
+        self.buffer = buffer
+
+    def __getitem__(self, n):
+        buffer, maxlen = self.buffer, self.buffer.maxlen
+        rows = np.arange(n - buffer.n_frames, n + 1)
         # Stacks repeat an episode's first frame rather than reach into the previous episode.
-        episode_start = np.maximum.accumulate(np.where(first, rows, 0))
-        tensor = partial(torch.as_tensor, device=device)
-        self.transitions, self.frames, self.actions = tensor(transitions), tensor(frames), tensor(actions)
-        self.rewards, self.terminates, self.episode_start = tensor(rewards), tensor(terminates), tensor(episode_start)
-        self.back = tensor(np.arange(history - 1, -1, -1))
+        rows = np.maximum(rows, rows[buffer.first[rows % maxlen]].max(initial=rows[0]))
+        frames = buffer.frames[rows % maxlen]
+        item = {'actions': torch.tensor(buffer.actions[n % maxlen]),
+                'states': torch.from_numpy(frames[:-1]).flatten(0, 1),
+                'next_states': torch.from_numpy(frames[1:]).flatten(0, 1),
+                'rewards': torch.tensor(buffer.rewards[n % maxlen]),
+                'terminates': torch.tensor(buffer.terminates[n % maxlen])}
+        # Row r is overwritten while row r + maxlen is written.
+        if rows[0] <= buffer.count[0] - maxlen:
+            return None
+        return item
 
-    def _stacks(self, ends):
-        return self.frames[torch.maximum(ends[:, None] - self.back, self.episode_start[ends][:, None])].flatten(1, 2)
 
-    def states(self, rows):
-        return self._stacks(rows - 1)
+class ReplaySampler(Sampler):
+    """Endless batches of uniformly random transitions, without the oldest 1% of the
+    buffer, which is overwritten next."""
+    def __init__(self, buffer, batch_size):
+        self.buffer = buffer
+        self.batch_size = batch_size
 
-    def batch(self, rows):
-        return {'actions': self.actions[rows], 'states': self._stacks(rows - 1), 'next_states': self._stacks(rows),
-                'rewards': self.rewards[rows], 'terminates': self.terminates[rows]}
+    def __iter__(self):
+        buffer = self.buffer
+        while True:
+            count = int(buffer.count[0])
+            low = max(count - buffer.maxlen + buffer.n_frames + buffer.maxlen // 100, 1)
+            rows = np.empty(0, np.int64)
+            while len(rows) < self.batch_size:
+                candidates = np.random.randint(low, count, self.batch_size)
+                rows = np.concatenate((rows, candidates[~buffer.first[candidates % buffer.maxlen]]))
+            yield rows[:self.batch_size].tolist()
+
+
+def collate(items):
+    return default_collate([item for item in items if item is not None])
+
+
+def loader(buffer, batch_size):
+    return DataLoader(ReplayDataset(buffer), batch_sampler=ReplaySampler(buffer, batch_size),
+                      num_workers=loader_workers, collate_fn=collate, pin_memory=torch.cuda.is_available(),
+                      multiprocessing_context='spawn' if loader_workers else None,
+                      persistent_workers=loader_workers > 0)
+
+
+def to_device(batch, device):
+    return {key: value.to(device, non_blocking=True) for key, value in batch.items()}
 
 
 class Normalize(nn.Module):
@@ -120,43 +139,47 @@ def autocast(device):
     return torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == 'cuda')
 
 
-def wait_for_gpu(tensor):
-    # CUDA runs queued work in order, so a long queue would delay the driving policy.
-    if tensor.is_cuda:
-        torch.cuda.current_stream(tensor.device).synchronize()
-    return tensor
-
-
-def fit(model, block, rows, loss, batch_size, flipped=False, ema=None):
+def fit(model, batch, loss, ema=None):
     model.train()
-    order = torch.randperm(len(rows) * (2 if flipped else 1), device=rows.device)
-    for start in range(0, len(order), batch_size):
-        index = order[start:start + batch_size]
-        model.optimizer.zero_grad()
-        total = 0.0
-        for part in index.split(micro_batch_size):
-            part_loss = loss(block.batch(rows[part % len(rows)]), part >= len(rows)) / len(index)
-            part_loss.backward()
-            total += wait_for_gpu(part_loss.detach())
-        model.optimizer.step()
-        if ema is not None:
-            ema.update(model)
+    model.optimizer.zero_grad()
+    size = len(batch['rewards'])
+    total = 0.0
+    for start in range(0, size, micro_batch_size):
+        part = {key: value[start:start + micro_batch_size] for key, value in batch.items()}
+        part_loss = loss(part) / size
+        part_loss.backward()
+        total += part_loss.detach()
+    model.optimizer.step()
+    if ema is not None:
+        ema.update(model)
     return float(total)
 
 
+def synchronize(device):
+    if device.type == 'cuda':
+        torch.cuda.synchronize(device)
+
+
 class EMA():
+    # The learner process updates the weights in place while the car's process drives with them.
+    # GPU work is finished before the lock is released, and the learner holds it only for the update.
     def __init__(self, model, decay):
         self.ema = ModelEmaV3(model, decay=decay)
         self.module = self.ema.module
-        self.lock = threading.Lock()
+        self.lock = context.Lock()
 
     def update(self, model):
+        device = next(model.parameters()).device
+        synchronize(device)
         with self.lock:
             self.ema.update(model)
+            synchronize(device)
 
     def __call__(self, *inputs):
         with torch.inference_mode(), self.lock, autocast(inputs[0].device):
-            return self.module(*inputs).float()
+            outputs = self.module(*inputs).float()
+            synchronize(inputs[0].device)
+        return outputs
 
 
 def save_checkpoint(path, **state):

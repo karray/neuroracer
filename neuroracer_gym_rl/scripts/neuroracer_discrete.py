@@ -1,39 +1,62 @@
 from collections import deque
 import json
 import os
-import threading
+import signal
 import time
 
 import numpy as np
 import gymnasium as gym
 
 from neuroracer_gym.tasks import neuroracer_discrete_task, neuroracer_continuous_task
-from utils import preprocess, loginfo
+from utils import context, preprocess, loader, loginfo
 
 
-class Learner(threading.Thread):
+class Learner(context.Process):
+    """Trains the agent in its own process. The agent's tensors are shared with the car's process,
+    which drives with the EMA network; checkpoints are saved with the car's progress."""
     def __init__(self, agent):
-        super(Learner, self).__init__(name='learner', daemon=True)
+        super(Learner, self).__init__(name='learner')
         self.agent = agent
-        self.stopping = threading.Event()
-        self.error = None
+        self.progress = context.Array('q', 2)
+        self.saving = context.Event()
+        self.stopping = context.Event()
+        self.loss = context.Value('d', float('nan'))
 
     def run(self):
-        try:
-            while not self.stopping.is_set():
-                if self.agent.buffer.length() < self.agent.batch_size or self.agent.replay() is False:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)  # The car's process stops the learner.
+        while self.agent.buffer.length() < self.agent.batch_size and not self.stopping.wait(0.1):
+            pass
+        if not self.stopping.is_set():
+            for batch in loader(self.agent.buffer, self.agent.batch_size):
+                if self.stopping.is_set():
+                    break
+                if self.agent.replay(batch) is False:
                     self.stopping.wait(0.1)
-        except BaseException as error:
-            self.error = error
+                    continue
+                self.loss.value = self.agent.loss
+                if self.saving.is_set():
+                    self._save()
+        self._save()
+        del self.agent  # Releases the GPU memory shared with the car's process, which owns it.
 
-    def stop(self):
-        self.stopping.set()
-        if self.ident is not None:
+    def _save(self):
+        self.saving.clear()
+        self.agent.progress = {'steps': self.progress[0], 'episodes': self.progress[1]}
+        self.agent.save_model()
+
+    def save(self, progress):
+        self.progress[:] = [progress['steps'], progress['episodes']]
+        self.saving.set()
+
+    def stop(self, progress):
+        if self.pid is not None:
+            self.save(progress)
+            self.stopping.set()
             self.join()
 
 
 class NeuroRacer:
-    def __init__(self, agent_class, sample_batch_size, n_frames, buffer_max_size, chunk_size, add_flipped,
+    def __init__(self, agent_class, sample_batch_size, n_frames, buffer_max_size, add_flipped,
                  env_id='NeuroRacer-v0', working_dir='.', max_episode_steps=1200):
         self.sample_batch_size = sample_batch_size
         self.env               = gym.make(env_id, max_episode_steps=max_episode_steps)
@@ -54,7 +77,7 @@ class NeuroRacer:
         else:
             self.action_size   = self.env.action_space.shape[0]
         os.makedirs(working_dir, exist_ok=True)
-        self.agent             = agent_class(self.state_size, self.action_size, buffer_max_size, chunk_size, add_flipped,
+        self.agent             = agent_class(self.state_size, self.action_size, buffer_max_size, add_flipped,
                                              working_dir=working_dir)
         self.metrics_path      = os.path.join(working_dir, 'metrics.jsonl')
 
@@ -96,8 +119,8 @@ class NeuroRacer:
 
                 episode_steps = 0
                 while not done:
-                    if learner.error is not None:
-                        raise RuntimeError('Learner failed') from learner.error
+                    if learner.exitcode is not None:
+                        raise RuntimeError('Learner failed')
                     steps+=1
                     episode_steps+=1
 
@@ -114,7 +137,7 @@ class NeuroRacer:
                     progress['steps'] += 1
 
                     if steps % self.sample_batch_size == 0:
-                        self.agent.save_requested = True
+                        learner.save(progress)
                         if steps >= n_steps:
                             do_training = False
 
@@ -130,15 +153,14 @@ class NeuroRacer:
                 with open(self.metrics_path, 'a') as metrics:
                     metrics.write(json.dumps({'step': progress['steps'], 'episode': progress['episodes'],
                                               'steps': episode_steps, 'return': float(cumulated_reward),
-                                              'exploration_rate': self.agent.exploration_rate, 'loss': self.agent.loss,
+                                              'exploration_rate': self.agent.exploration_rate, 'loss': learner.loss.value,
                                               'buffer': self.agent.buffer.length(), 'time': time.time()}) + '\n')
 
         except KeyboardInterrupt:
             loginfo("Interrupted; waiting for the current replay to finish")
         finally:
             try:
-                learner.stop()
-                self.agent.save_model()
+                learner.stop(progress)
             finally:
                 self.agent.buffer.close()
                 self.env.close()
