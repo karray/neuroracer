@@ -10,9 +10,10 @@ class Config:
     height: int = 56
     width: int = 128
     crop_top: int = 200
-    batch_size: int = 32
-    buffer_size: int = 10000
-    warmup: int = 1000
+    batch_size: int = 128
+    buffer_size: int = 1000000  # On disk, about 7 KB per transition
+    block_size: int = 10000  # Contiguous transitions per training epoch
+    warmup: int = 1000  # DDPG's initial random steps
     gamma: float = 0.99
     learning_rate: float = 0.0001
     actor_learning_rate: float = 0.0001
@@ -23,15 +24,12 @@ class Config:
     epsilon_steps: int = 50000
     noise_std: float = 0.2
     seed: int = 0
-    device: str = 'cpu'
+    device: str = 'auto'  # CUDA when available
     threads: int = 4
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
             raise ValueError('Unknown algorithm: ' + self.algorithm)
-        # Updates start once replay holds `warmup` transitions; it must be reachable.
-        if self.warmup > self.buffer_size:
-            raise ValueError('warmup must not exceed buffer_size')
 
     @property
     def continuous(self):

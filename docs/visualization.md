@@ -14,7 +14,8 @@ GzWeb opens in a third-person chase view of the car (**Follow car**; dragging
 adjusts the offset, **Overview** stops following) with the car's own camera
 sensor inset in the corner — the same image the agent receives. A paused world
 produces no frames, so the inset updates only while the world runs (Play or
-training); the **Camera** button toggles it. Leave Play/Pause alone while training, which owns
+training); the **Camera** button toggles it. The world is not throttled to real
+time, so Play runs it as fast as the CPU allows. Leave Play/Pause alone while training, which owns
 world timing. Neither viewer is part of the RL control path.
 
 ## Resource use
@@ -24,11 +25,11 @@ world timing. Neither viewer is part of the RL control path.
 - The browser renders the scene at up to 30 FPS. The WebSocket plugin publishes
   at 20 Hz to at most four clients with 100 queued messages each. Hidden tabs
   disconnect and reconnect when visible.
-- While the camera inset is shown, Gazebo PNG-encodes camera frames at up to
-  20 Hz and keeps rendering the camera even when no ROS client listens. Turn the
-  inset off to remove that cost.
-- ROS bridges for camera, lidar, odometry and clock subscribe lazily. Mesa uses
-  four worker threads (`LP_NUM_THREADS`); PyTorch uses `--threads`.
+- While the camera inset is shown, Gazebo PNG-encodes the 10 Hz camera frames.
+  Turn the inset off to remove that cost.
+- The camera, lidar and odometry bridges stay subscribed so no frame of a paused
+  step is lost; sensors render only while the world advances. Mesa uses four
+  worker threads (`LP_NUM_THREADS`, more is slower); PyTorch uses `--threads`.
 - Nginx serves the prebuilt frontend and the model meshes (browser-cached), and
   proxies `/ws` to Gazebo's internal port 9002, limited to 128 MiB and 32 processes.
 

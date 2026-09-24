@@ -17,10 +17,11 @@ def save_checkpoint(path, agent, step, episodes):
     os.replace(temporary, path)
 
 
-def load_checkpoint(path, device='cpu'):
+def load_checkpoint(path, device=None):
     # State dictionaries and primitive metadata only; no pickled model objects.
     payload = torch.load(path, map_location='cpu', weights_only=True)
-    agent = make_agent(replace(Config(**payload['config']), device=device))
+    config = Config(**payload['config'])
+    agent = make_agent(replace(config, device=device) if device else config)
     agent.load_state_dict(payload['agent'])
     torch.set_rng_state(payload['torch_rng'])
     return agent, payload['step'], payload['episodes']

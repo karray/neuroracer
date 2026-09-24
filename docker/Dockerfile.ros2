@@ -6,7 +6,9 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv --system-site-packages /opt/neuroracer-venv
 ENV PATH="/opt/neuroracer-venv/bin:${PATH}"
-# CPU wheels keep local development independent of CUDA.
+# The CUDA 13.0 wheel (NVIDIA driver 580 or newer) also runs without a GPU; build
+# with --build-arg TORCH_VARIANT=cpu for a smaller CPU-only image.
+ARG TORCH_VARIANT=cu130
 COPY requirements-ros2.txt /tmp/requirements-ros2.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-ros2.txt && \
-    pip install --no-cache-dir torch==2.14.0+cpu --index-url https://download.pytorch.org/whl/cpu
+    pip install --no-cache-dir torch==2.14.0+${TORCH_VARIANT} --index-url https://download.pytorch.org/whl/${TORCH_VARIANT}

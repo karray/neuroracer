@@ -1,0 +1,9 @@
+# GPU access for training and sensor rendering. scripts/dev adds this file when
+# Docker has the NVIDIA runtime (nvidia-container-toolkit); set NEURORACER_GPU=0
+# to leave it out.
+services:
+  dev:
+    gpus: all
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics  # graphics: Gazebo's EGL rendering
+      LIBGL_ALWAYS_SOFTWARE: "0"

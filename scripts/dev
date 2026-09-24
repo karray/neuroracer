@@ -3,6 +3,9 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)"
 compose=(docker compose -f compose.yaml)
+if [[ "${NEURORACER_GPU:-1}" != 0 ]] && docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+  compose+=(-f compose.gpu.yaml)
+fi
 entry=/workspace/docker/ros2-entrypoint.sh
 exec_options=(-T)
 if [[ -t 0 && -t 1 ]]; then exec_options=(); fi

@@ -4,8 +4,7 @@ import numpy as np
 import gymnasium as gym
 import neuroracer_gym  # registers the environments
 
-# The starting straight is finite. Free-running steps can advance farther
-# under CPU contention, so keep this smoke trajectory well before the wall.
+# The starting straight is finite; eight 0.1 s steps stay well before the wall.
 with gym.make('NeuroRacerDiscrete-v0', max_episode_steps=8) as env:
     image, info = env.reset(seed=7)
     assert env.observation_space.contains(image), (image.shape, image.dtype)
@@ -21,7 +20,7 @@ with gym.make('NeuroRacerDiscrete-v0', max_episode_steps=8) as env:
     assert distance > 0.2, ('Car did not move under ROS 2 control', distance)
     image, reset_info = env.reset(seed=7)
     assert np.linalg.norm(reset_info['position'] - start) < 0.3, 'Reset did not restore the car'
-    print('PASS: ROS 2 RGB camera {}, lidar, clock, {:.2f} m driving, truncation, reset'.format(image.shape, distance))
+    print('PASS: ROS 2 RGB camera {}, lidar, {:.2f} m driving, truncation, reset'.format(image.shape, distance))
 
 with gym.make('NeuroRacerContinuous-v0') as env:
     for steering in (0.5, -0.5):

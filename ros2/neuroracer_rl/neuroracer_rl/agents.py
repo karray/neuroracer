@@ -1,4 +1,5 @@
 from copy import deepcopy
+import threading
 import numpy as np
 import torch
 from torch import nn
@@ -27,21 +28,39 @@ def optimize(optimizer, loss, parameters):
     optimizer.step()
 
 
-class DQNAgent:
+class Agent:
+    """Acts with `policy`, a copy of the learned policy network that the learner
+    refreshes with `sync_policy` after each epoch, never in the middle of one."""
+    def __init__(self, learned):
+        self.learned = learned
+        self.policy = deepcopy(learned).requires_grad_(False)
+        self.policy_lock = threading.Lock()
+
+    def sync_policy(self):
+        with self.policy_lock:
+            self.policy.load_state_dict(self.learned.state_dict())
+
+
+def resolve_device(name):
+    return torch.device(('cuda' if torch.cuda.is_available() else 'cpu') if name == 'auto' else name)
+
+
+class DQNAgent(Agent):
     def __init__(self, config):
         self.config = config
-        self.device = torch.device(config.device)
+        self.device = resolve_device(config.device)
         self.rng = np.random.default_rng(config.seed)
         self.online = QNetwork(config.frames, config.recurrent).to(self.device)
         self.target = deepcopy(self.online).requires_grad_(False)
         self.optimizer = torch.optim.Adam(self.online.parameters(), lr=config.learning_rate)
         self.updates = 0
+        super().__init__(self.online)
 
     def act(self, state, step=0, explore=True):
         if explore and self.rng.random() < self.config.epsilon(step):
             return int(self.rng.integers(3))
-        with torch.inference_mode():
-            values = self.online(torch.as_tensor(np.asarray(state)[None], device=self.device))
+        with torch.inference_mode(), self.policy_lock:
+            values = self.policy(torch.as_tensor(np.asarray(state)[None], device=self.device))
             return int(values.argmax(dim=1).item())
 
     def update(self, batch):
@@ -71,12 +90,13 @@ class DQNAgent:
         self.optimizer.load_state_dict(state['optimizer'])
         self.updates = state['updates']
         self.rng.bit_generator.state = state['rng']
+        self.sync_policy()
 
 
-class DDPGAgent:
+class DDPGAgent(Agent):
     def __init__(self, config):
         self.config = config
-        self.device = torch.device(config.device)
+        self.device = resolve_device(config.device)
         self.rng = np.random.default_rng(config.seed)
         self.actor = Actor(config.frames).to(self.device)
         self.critic = Critic(config.frames).to(self.device)
@@ -85,12 +105,13 @@ class DDPGAgent:
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=config.actor_learning_rate)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=config.learning_rate)
         self.updates = 0
+        super().__init__(self.actor)
 
     def act(self, state, step=0, explore=True):
         if explore and step < self.config.warmup:
             return self.rng.uniform(-1, 1, size=1).astype(np.float32)
-        with torch.inference_mode():
-            action = self.actor(torch.as_tensor(np.asarray(state)[None], device=self.device))[0].cpu().numpy()
+        with torch.inference_mode(), self.policy_lock:
+            action = self.policy(torch.as_tensor(np.asarray(state)[None], device=self.device))[0].cpu().numpy()
         if explore:
             action = action + self.rng.normal(0, self.config.noise_std, size=1)
         return np.clip(action, -1, 1).astype(np.float32)
@@ -123,6 +144,7 @@ class DDPGAgent:
             getattr(self, key).load_state_dict(state[key])
         self.updates = state['updates']
         self.rng.bit_generator.state = state['rng']
+        self.sync_policy()
 
 
 def make_agent(config):

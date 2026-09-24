@@ -47,13 +47,20 @@ with gym.make('NeuroRacerDiscrete-v0') as env:
   `NeuroRacerContinuous-v0`: a float32 array with one steering value in [-1, 1].
 - Observations are 480×640 RGB uint8 camera images. Steering is limited to
   ±0.6 rad at a constant 1 m/s.
-- Each step advances about 0.1 s of simulation and waits for fresh sensor data;
-  the world is paused between steps. All waits have wall-clock timeouts.
+- Each step advances exactly 0.1 s of physics (`multi_step` on the paused world)
+  and returns the camera, lidar and odometry of that instant; the sensors run at
+  10 Hz to match. The world is otherwise unthrottled, so steps run faster than
+  real time. All waits have wall-clock timeouts.
+- `reset` brakes the car and teleports it rather than resetting the world:
+  Gazebo Jetty recreates plugins without a Reset hook on a world reset, which
+  corrupts its heap under load. `info` holds the ground-truth `position` and `yaw`.
 - Reward is lidar forward clearance minus left/right imbalance; a collision
   terminates the episode with -100. Episodes truncate after 1000 steps
   (`gym.make(..., max_episode_steps=N)` overrides this).
-- `reset(options={'pose': (x, y, yaw)})` sets the start pose (default `(2, 3.7, pi/2)`).
-- ROS topics: `/camera/image_raw`, `/scan`, `/odom`, `/clock`, `/cmd_vel`
+- `reset` starts at `(2, 3.7)` with a random heading from the seeded
+  `np_random`; the spawn area is clear all around. `reset(options={'pose': (x, y, yaw)})`
+  sets an exact pose instead (along the tunnel is `(2, 3.7, pi/2)`).
+- ROS topics: `/camera/image_raw`, `/scan`, `/odom`, `/cmd_vel`
   (`angular.z` is yaw rate, not steering angle).
 
 ## Training
@@ -67,5 +74,6 @@ With `web` or `sim` running, in a second terminal:
 ```
 
 Agents: `dqn`, `double_dqn`, `drqn`, `double_drqn` (discrete) and `ddpg`
-(continuous). See [training details](docs/pytorch-training.md).
+(continuous). Training uses CUDA when the container has a GPU and the CPU
+otherwise. See [training details](docs/pytorch-training.md).
 `q_learning.ipynb` shows the same Python API.

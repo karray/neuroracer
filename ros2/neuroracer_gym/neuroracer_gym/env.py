@@ -3,7 +3,9 @@
 The caller owns the simulator process. One environment controls one world; this
 is not a vectorized environment. All waits have wall-clock deadlines so a paused
 or crashed simulator cannot block training forever. Episode time limits come from
-the registered TimeLimit wrapper (gym.make(..., max_episode_steps=N)).
+the registered TimeLimit wrapper (gym.make(..., max_episode_steps=N)). reset()
+places the car at the spawn point with a heading drawn from the seeded np_random,
+or at options={'pose': (x, y, yaw)}.
 """
 import math
 import time
@@ -13,16 +15,17 @@ import numpy as np
 import rclpy
 from rclpy.context import Context
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Image, LaserScan
 from nav_msgs.msg import Odometry
-from rosgraph_msgs.msg import Clock
 from ros_gz_interfaces.msg import Entity
 from ros_gz_interfaces.srv import ControlWorld, SetEntityPose
 from .observations import image_array, laser_metrics
 
 WHEELBASE = 0.325
+STEP_SIZE = 0.001  # racecar_tunnel.sdf max_step_size
+PERIOD = 0.1  # Environment step and sensor/odometry update period (model.sdf)
+START = (2.0, 3.7, math.pi / 2)  # Spawn point, facing along the tunnel.
 
 
 def stamp_seconds(stamp):
@@ -48,15 +51,14 @@ class NeuroRacerEnv(gym.Env):
         self.executor.add_node(self.node)
         self.publisher = self.node.create_publisher(Twist, '/cmd_vel', 10)
         self.subscriptions = [
-            self.node.create_subscription(Image, '/camera/image_raw', self._camera, qos_profile_sensor_data),
-            self.node.create_subscription(LaserScan, '/scan', self._scan, qos_profile_sensor_data),
+            self.node.create_subscription(Image, '/camera/image_raw', self._camera, 10),
+            self.node.create_subscription(LaserScan, '/scan', self._scan, 10),
             self.node.create_subscription(Odometry, '/odom', self._odom, 10),
-            self.node.create_subscription(Clock, '/clock', self._clock, qos_profile_sensor_data),
         ]
         self.control = self.node.create_client(ControlWorld, '/world/racecar_tunnel/control')
         self.set_pose = self.node.create_client(SetEntityPose, '/world/racecar_tunnel/set_pose')
         self.image = self.scan = self.odom = None
-        self.image_time = self.scan_time = self.sim_time = -1.0
+        self.image_time = self.scan_time = self.odom_time = -1.0
         self.closed = False
 
     def _camera(self, msg):
@@ -69,9 +71,10 @@ class NeuroRacerEnv(gym.Env):
 
     def _odom(self, msg):
         self.odom = msg.pose.pose
+        self.odom_time = stamp_seconds(msg.header.stamp)
 
-    def _clock(self, msg):
-        self.sim_time = stamp_seconds(msg.clock)
+    def _stamps(self):
+        return self.image_time, self.scan_time, self.odom_time
 
     def _wait(self, predicate, description):
         deadline = time.monotonic() + self.timeout
@@ -101,19 +104,22 @@ class NeuroRacerEnv(gym.Env):
         msg.angular.z = speed * math.tan(steering) / WHEELBASE  # Twist carries yaw rate, not steering angle.
         self.publisher.publish(msg)
 
-    def _advance(self, duration):
-        start = self.sim_time
-        self._pause(False)
-        try:
-            self._wait(lambda: self.sim_time >= start + duration
-                       and self.image_time >= start + duration * 0.5
-                       and self.scan_time >= start + duration * 0.5,
-                       'fresh camera, lidar, and simulation clock')
-        finally:
-            self._pause(True)
+    def _advance(self):
+        # Step exactly one sensor period of physics while paused; unpausing overshoots by
+        # the service round-trip, so actions would last a variable, load-dependent time.
+        previous = self._stamps()
+        request = ControlWorld.Request()
+        request.world_control.pause = True
+        request.world_control.multi_step = round(PERIOD / STEP_SIZE)
+        self._call(self.control, request)
+        # Each period holds exactly one 10 Hz camera, lidar and odometry update; nothing
+        # else arrives while paused.
+        self._wait(lambda: all(now >= before + PERIOD - STEP_SIZE / 2
+                               for now, before in zip(self._stamps(), previous)),
+                   'camera, lidar, and odometry')
 
     def _info(self):
-        info = {'sim_time': self.sim_time}
+        info = {'sim_time': self.image_time}
         if self.odom is not None:
             info['position'] = np.array([self.odom.position.x, self.odom.position.y], dtype=np.float64)
             q = self.odom.orientation
@@ -122,33 +128,29 @@ class NeuroRacerEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        self._wait(lambda: self.publisher.get_subscription_count() > 0, 'command bridge')
+        # The paused world publishes sensors only while stepping; unmatched topics would miss them.
+        self._wait(lambda: self.publisher.get_subscription_count() > 0
+                   and all(s.get_publisher_count() > 0 for s in self.subscriptions), 'ROS/Gazebo bridge')
+        # Stop, then teleport. A world reset would recreate plugins without a Reset hook
+        # (Ackermann, UserCommands, WebSocket) while their transport callbacks run, which
+        # corrupts Gazebo Jetty's heap.
         self._command()
-        request = ControlWorld.Request()
-        request.world_control.pause = True
-        request.world_control.reset.all = True
-        self._call(self.control, request)
-        # Drain messages from before the world reset, then await a fresh sensor cycle.
-        for _ in range(20):
-            self.executor.spin_once(timeout_sec=0.0)
-        self.image = self.scan = self.odom = None
-        self.image_time = self.scan_time = self.sim_time = -1.0
+        for _ in range(3):  # Brake from 1 m/s to rest; a teleport keeps velocities.
+            self._advance()
         pose = SetEntityPose.Request()
         pose.entity.name = 'racecar'
         pose.entity.type = Entity.MODEL
-        values = (options or {}).get('pose', (2.0, 3.7, math.pi / 2))
-        x, y, yaw = map(float, values)
+        if options and 'pose' in options:
+            x, y, yaw = map(float, options['pose'])
+        else:
+            # A random heading varies the first states; the spawn area has over 1 m of
+            # clearance all around, so every heading is drivable.
+            x, y, yaw = START[0], START[1], START[2] + self.np_random.uniform(-math.pi, math.pi)
         pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = x, y, 0.05
         pose.pose.orientation.z = math.sin(yaw / 2)
         pose.pose.orientation.w = math.cos(yaw / 2)
         self._call(self.set_pose, pose)
-        self._command()
-        self._pause(False)
-        try:
-            self._wait(lambda: self.image is not None and self.scan is not None
-                       and self.odom is not None and self.sim_time >= 0.1, 'sensors after reset')
-        finally:
-            self._pause(True)
+        self._advance()
         return self.image, self._info()
 
     def step(self, action):
@@ -157,7 +159,7 @@ class NeuroRacerEnv(gym.Env):
         steering = float(action[0]) * 0.6 if self.continuous else (int(action) - 1) * 0.6
         self._command(steering, speed=1.0)
         try:
-            self._advance(0.1)
+            self._advance()
         except Exception:
             self._command()
             raise

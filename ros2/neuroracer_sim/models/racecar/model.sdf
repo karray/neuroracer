@@ -75,7 +75,8 @@
       </visual>
       <sensor name="hokuyo_sensor" type="gpu_lidar">
         <visualize>false</visualize>
-        <update_rate>40</update_rate>
+        <!-- Sensors fire once per 0.1 s environment step, exactly at its end. -->
+        <update_rate>10</update_rate>
         <lidar>
           <scan>
             <horizontal>
@@ -102,7 +103,7 @@
       </sensor>
       <gravity>1</gravity>
       <sensor name="zed_camera_left_sensor" type="camera">
-        <update_rate>30</update_rate>
+        <update_rate>10</update_rate>
         <camera name="zed_camera_left_camera">
           <horizontal_fov>0.870922</horizontal_fov>
           <image>
@@ -490,12 +491,18 @@
       <steering_limit>0.6</steering_limit>
       <steer_p_gain>10</steer_p_gain>
       <topic>/cmd_vel</topic>
-      <odom_topic>/odom</odom_topic>
-      <frame_id>odom</frame_id>
-      <child_frame_id>base_link</child_frame_id>
-      <odom_publish_frequency>30</odom_publish_frequency>
+      <!-- Wheel odometry is unused; /odom below reports the ground-truth pose. -->
+      <odom_topic>/model/racecar/wheel_odometry</odom_topic>
+      <odom_publish_frequency>1</odom_publish_frequency>
       <min_velocity>-2</min_velocity>
       <max_velocity>2</max_velocity>
+    </plugin>
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_topic>/odom</odom_topic>
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <odom_publish_frequency>10</odom_publish_frequency>
+      <dimensions>2</dimensions>
     </plugin>
   </model>
 </sdf>

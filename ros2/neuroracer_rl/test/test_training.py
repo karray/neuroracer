@@ -1,3 +1,5 @@
+from dataclasses import replace
+import time
 import numpy as np
 import pytest
 import torch
@@ -10,7 +12,7 @@ from neuroracer_rl.runner import train, evaluate
 
 
 def small_config(algorithm='double_dqn'):
-    return Config(algorithm=algorithm, frames=2, batch_size=2, buffer_size=8,
+    return Config(algorithm=algorithm, frames=2, batch_size=2, buffer_size=8, block_size=8,
                   warmup=2, target_interval=1, tau=1.0, threads=1)
 
 
@@ -65,6 +67,7 @@ def test_learning_update_and_checkpoint_roundtrip(algorithm, tmp_path):
     assert any(not torch.equal(old, new) for old, new in zip(before, model.parameters()))
     target = agent.actor_target if config.continuous else agent.target
     assert all(torch.equal(a, b) for a, b in zip(target.parameters(), model.parameters()))
+    agent.sync_policy()  # The learner does this after each epoch.
     state = tuple(make_batch(config)['states'][0])
     predicted = agent.act(state, explore=False)
     path = tmp_path / 'model.pt'
@@ -82,6 +85,35 @@ def test_learning_update_and_checkpoint_roundtrip(algorithm, tmp_path):
         assert predicted.shape == (1,) and predicted.dtype == np.float32 and abs(predicted[0]) <= 1
     else:
         assert predicted in (0, 1, 2)
+
+
+def test_replay_blocks_rebuild_frame_history_stacks(tmp_path):
+    config = replace(small_config(), frames=3, buffer_size=12)
+    replay, history = ReplayBuffer(tmp_path / 'replay.h5', config), FrameHistory(config)
+    expected, value = {}, 0
+    for length in (2, 5, 1, 6):  # 18 rows wrap the 12-row buffer.
+        state = history.reset(np.full((480, 640, 3), value, np.uint8))
+        replay.start_episode(state[-1])
+        for step in range(length):
+            value += 1
+            next_state = history.append(np.full((480, 640, 3), value, np.uint8))
+            replay.append(value % 3, value, next_state[-1], step == length - 1)
+            expected[value] = (np.stack(state), np.stack(next_state), value % 3, step == length - 1)
+            state = next_state
+        value += 1
+    seen = set()
+    for _ in range(50):
+        block = replay.block(4)
+        batch = block.batch(block.transitions)
+        for index, reward in enumerate(batch['rewards'].tolist()):
+            states, next_states, action, terminated = expected[reward]
+            np.testing.assert_array_equal(batch['states'][index].numpy(), states)
+            np.testing.assert_array_equal(batch['next_states'][index].numpy(), next_states)
+            assert (batch['actions'][index].item(), batch['terminated'][index].item()) == (action, terminated)
+            seen.add(reward)
+    # Transitions whose earlier frames were overwritten are never sampled.
+    assert seen == {10, 12, 13, 14, 15, 16, 17}
+    replay.close()
 
 
 class CameraEnv(gym.Env):
@@ -112,10 +144,11 @@ class CameraEnv(gym.Env):
 def test_train_resume_and_inference_do_not_overwrite_checkpoint(algorithm, tmp_path):
     config = small_config(algorithm)
     result = train(4, tmp_path, config=config, max_episode_steps=2, env_factory=CameraEnv)
-    assert result['step'] == 4 and result['updates'] == 3 and result['episodes'] == 2
+    assert result['step'] == 4 and result['episodes'] == 2
     path = tmp_path / 'latest.pt'
     resumed = train(2, tmp_path, resume=path, max_episode_steps=2, env_factory=CameraEnv)
-    assert resumed['step'] == 6 and resumed['updates'] == 4
+    assert resumed['step'] == 6 and resumed['updates'] >= result['updates']
+    assert not (tmp_path / 'replay.h5').exists()
     before = path.read_bytes()
     episodes = evaluate(path, episodes=2, max_episode_steps=2, env_factory=CameraEnv)
     assert episodes == [{'episode': 1, 'steps': 2, 'return': 2.0}, {'episode': 2, 'steps': 2, 'return': 2.0}]
@@ -147,3 +180,17 @@ def test_interruption_and_ros_failure_save_progress_and_close(failure, tmp_path)
     _, step, _ = load_checkpoint(tmp_path / 'latest.pt')
     assert step == 1 and instances[0].closed
 
+
+
+class SlowCameraEnv(CameraEnv):
+    def step(self, action):
+        time.sleep(0.02)  # A simulator step takes tens of milliseconds.
+        return super().step(action)
+
+
+def test_learner_trains_while_collecting_and_refreshes_policy(tmp_path):
+    result = train(20, tmp_path, config=small_config(), max_episode_steps=5, env_factory=SlowCameraEnv)
+    # Training starts with one batch in replay and does not wait for more data.
+    assert result['updates'] > 20
+    agent, _, _ = load_checkpoint(tmp_path / 'latest.pt')
+    assert all(torch.equal(a, b) for a, b in zip(agent.policy.parameters(), agent.online.parameters()))
