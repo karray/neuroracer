@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from copy import deepcopy
 from functools import partial
 import os
 import threading
@@ -10,21 +9,24 @@ import h5py
 import numpy as np
 import torch
 from torch import nn
+from timm.utils import ModelEmaV3
 
 loginfo = partial(print, flush=True)
 # Largest batch per GPU pass while training: long passes would delay the driving policy's.
-micro_batch_size = 128
+micro_batch_size = 32
 
 
-def preprocess(img, y_offset, x_scale, y_scale, interpolation=cv2.INTER_LINEAR):
-    # uint8, so the replay buffer stores each frame in one byte per pixel; Normalize scales it.
-    return cv2.resize(cv2.cvtColor(img[y_offset:,:], cv2.COLOR_RGB2GRAY), None, fx=x_scale, fy=y_scale, interpolation=interpolation)
+def preprocess(img, y_offset, size, interpolation=cv2.INTER_AREA):
+    """The BGR camera image without its top `y_offset` rows, as a size x size RGB image,
+    channels first. uint8, so the replay buffer stores one byte per value; Normalize scales it."""
+    img = cv2.resize(img[y_offset:,:], (size, size), interpolation=interpolation)
+    return np.ascontiguousarray(img[:, :, ::-1].transpose(2, 0, 1))
 
 
 class H5Buffer():
     """Cyclic replay buffer in an HDF5 file, so its size is limited by disk, not RAM.
 
-    Each preprocessed frame is stored once: a row that starts an episode holds its first
+    Each preprocessed RGB frame is stored once: a row that starts an episode holds its first
     frame; every other row holds the frame after a transition, with that transition's
     action, reward and termination. `sample` reads a random contiguous block, which HDF5
     serves much faster than scattered rows, and the block rebuilds the frame stacks.
@@ -41,7 +43,7 @@ class H5Buffer():
 
         def dataset(name, shape, dtype):
             return self.file.create_dataset(name, (maxlen,)+shape, dtype=dtype, chunks=(min(64, maxlen),)+shape)
-        self.frames = dataset('frames', state_shape[:2], np.uint8)
+        self.frames = dataset('frames', (3,) + state_shape[:2], np.uint8)
         self.first = dataset('first', (), np.bool_)
         self.actions = dataset('actions', action_shape, action_dtype)
         self.rewards = dataset('rewards', (), np.float32)
@@ -80,8 +82,9 @@ class H5Buffer():
                     return dataset[first:first + count]
                 return np.concatenate((dataset[first:], dataset[:first + count - self.maxlen]))
 
-            return Block(read(self.frames), read(self.first), read(self.actions), read(self.rewards),
-                         read(self.terminates), start_idx - begin_idx, history, device)
+            rows = [read(dataset) for dataset in (self.frames, self.first, self.actions, self.rewards, self.terminates)]
+        # Copied to the device outside the lock, so the collector can append meanwhile.
+        return Block(*rows, start_idx - begin_idx, history, device)
 
     def length(self):
         return self.size
@@ -98,7 +101,8 @@ class H5Buffer():
 
 class Block():
     """Consecutive replay rows on the training device; states are rebuilt there from single
-    frames, so batches are never copied from the host."""
+    frames, so batches are never copied from the host. A state stacks the RGB channels of
+    its frames, oldest first: (3 * frames, height, width)."""
     def __init__(self, frames, first, actions, rewards, terminates, offset, history, device='cpu'):
         rows = np.arange(len(first))
         # Transitions are the non-first rows of the block proper; their states end one row earlier.
@@ -111,7 +115,7 @@ class Block():
         self.back = tensor(np.arange(history - 1, -1, -1))
 
     def _stacks(self, ends):
-        return self.frames[torch.maximum(ends[:, None] - self.back, self.episode_start[ends][:, None])]
+        return self.frames[torch.maximum(ends[:, None] - self.back, self.episode_start[ends][:, None])].flatten(1, 2)
 
     def states(self, rows):
         return self._stacks(rows - 1)
@@ -122,29 +126,15 @@ class Block():
 
 
 class Normalize(nn.Module):
-    """uint8 frames to [0, 1], as the original preprocess did."""
+    """uint8 frames to [0, 1], as the original preprocess did, in the channels-last layout
+    that makes convolutions faster on tensor cores."""
     def forward(self, states):
-        return states.float() / 255.0
+        return (states.float() / 255.0).contiguous(memory_format=torch.channels_last)
 
 
-def keras_init(model):
-    """Keras' default initializers: glorot_uniform kernels, orthogonal recurrent kernels,
-    zero biases and LSTM forget-gate biases of one."""
-    for module in model.modules():
-        if isinstance(module, (nn.Linear, nn.Conv2d)):
-            nn.init.xavier_uniform_(module.weight)
-            nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.LSTM):
-            for name, param in module.named_parameters():
-                if name.startswith('weight_ih'):
-                    nn.init.xavier_uniform_(param)
-                elif name.startswith('weight_hh'):
-                    nn.init.orthogonal_(param)
-                else:
-                    nn.init.zeros_(param)
-                    if name.startswith('bias_ih'):
-                        nn.init.ones_(param[module.hidden_size:2 * module.hidden_size])
-    return model
+def autocast(device):
+    """bf16 mixed precision on the GPU; weights, optimizer states and losses stay fp32."""
+    return torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == 'cuda')
 
 
 def wait_for_gpu(tensor):
@@ -157,16 +147,17 @@ def wait_for_gpu(tensor):
 
 def predict(model, states):
     model.eval()
-    with torch.no_grad():
-        return wait_for_gpu(model(states))
+    with torch.no_grad(), autocast(states.device):
+        return wait_for_gpu(model(states).float())
 
 
-def fit(model, block, rows, targets, batch_size, flipped=False):
+def fit(model, block, rows, targets, batch_size, flipped=False, ema=None):
     """One shuffled epoch, like Keras' fit(states, targets, shuffle=True, epochs=1). With
     `flipped`, targets[len(rows):] belong to the mirrored states of the same rows.
 
     Each batch's MSE gradient is summed over micro-batches before the optimizer step: the
-    same update, but in short GPU kernels between which the driving policy can run."""
+    same update, but in short GPU kernels between which the driving policy can run.
+    `ema` follows every optimizer step."""
     model.train()
     order = torch.randperm(len(targets), device=targets.device)
     for start in range(0, len(order), batch_size):
@@ -178,27 +169,32 @@ def fit(model, block, rows, targets, batch_size, flipped=False):
             if flipped:
                 mirror = part >= len(rows)
                 states[mirror] = states[mirror].flip(-1)
-            part_loss = nn.functional.mse_loss(model(states), targets[part], reduction='sum') / targets[index].numel()
+            with autocast(states.device):
+                values = model(states)
+            part_loss = nn.functional.mse_loss(values.float(), targets[part], reduction='sum') / targets[index].numel()
             part_loss.backward()
             loss += wait_for_gpu(part_loss.detach())
         model.optimizer.step()
+        if ema is not None:
+            ema.update(model)
     return float(loss)
 
 
-class ActingCopy():
-    """A copy of a model that the collector acts with while the learner trains the model."""
-    def __init__(self, model):
-        self.model = model
-        self.copy = deepcopy(model).eval().requires_grad_(False)
-        self.lock = threading.Lock()
+class EMA():
+    """Exponential moving average of a model's weights (timm's ModelEmaV3), updated after
+    every optimizer step. It is the target network and the network the car drives with."""
+    def __init__(self, model, decay):
+        self.ema = ModelEmaV3(model, decay=decay)
+        self.module = self.ema.module
+        self.lock = threading.Lock()  # The collector acts while the learner updates.
 
-    def sync(self):
+    def update(self, model):
         with self.lock:
-            self.copy.load_state_dict(self.model.state_dict())
+            self.ema.update(model)
 
     def __call__(self, *inputs):
-        with torch.inference_mode(), self.lock:
-            return self.copy(*inputs)
+        with torch.inference_mode(), self.lock, autocast(inputs[0].device):
+            return self.module(*inputs).float()
 
 
 def save_checkpoint(path, **state):

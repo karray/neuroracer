@@ -45,11 +45,9 @@ class NeuroRacer:
         self.n_frames = n_frames
 
         self.img_y_offset = 200
-        self.img_y_scale = 0.2
-        self.img_x_scale = 0.2
+        self.img_size = 224  # resnet18's native input size
 
-        state_size = self.env.observation_space.shape
-        self.state_size        = (int((state_size[0]-self.img_y_offset)*self.img_y_scale), int(state_size[1]*self.img_x_scale), n_frames)
+        self.state_size        = (self.img_size, self.img_size, n_frames)
         loginfo("State size")
         loginfo(self.state_size)
 
@@ -88,7 +86,7 @@ class NeuroRacer:
                 yaw = np.random.uniform(-np.pi, np.pi)
                 self.env.unwrapped.initial_position = {'p_x': np.random.uniform(1,4), 'p_y': 3.7, 'p_z': 0.05, 'o_x': 0, 'o_y': 0.0, 'o_z': np.sin(yaw/2), 'o_w': np.cos(yaw/2)}
                 state, _ = self.env.reset()
-                state = preprocess(state, self.img_y_offset, self.img_x_scale, self.img_y_scale)
+                state = preprocess(state, self.img_y_offset, self.img_size)
                 self.agent.buffer.start_episode(state)
 
                 done = False
@@ -105,11 +103,12 @@ class NeuroRacer:
                     steps+=1
                     episode_steps+=1
 
-                    action = self.agent.act(np.expand_dims(np.stack(stacked_states, axis=0), axis=0))
+                    # The frames' RGB channels, oldest first, as the replay buffer stacks them.
+                    action = self.agent.act(np.expand_dims(np.concatenate(stacked_states, axis=0), axis=0))
 
                     next_state, reward, terminated, truncated, _ = self.env.step(action)
                     done = terminated or truncated
-                    next_state = preprocess(next_state, self.img_y_offset, self.img_x_scale, self.img_y_scale)
+                    next_state = preprocess(next_state, self.img_y_offset, self.img_size)
 
                     # Only termination (a crash) cuts the return; the stacks are rebuilt from the buffer's frames.
                     self.agent.buffer.append(action, next_state, reward, terminated)

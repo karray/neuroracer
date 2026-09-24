@@ -7,13 +7,14 @@ The runtime uses PyTorch 2.14.0 (CUDA 13.0 wheel) and Gymnasium 1.3.0. Start
 
 ```bash
 ./scripts/dev train dqn                          # runs/dqn, 200,000 steps
-./scripts/dev train double_dqn --output runs/first-run --steps 50000
+./scripts/dev train dqn --output runs/first-run --steps 50000
+./scripts/dev train dqn --frames 4                # stack 4 camera images per state
 ./scripts/dev train --help
 ```
 
 `scripts/training.py` builds the `NeuroRacer` loop (`neuroracer_discrete.py`)
 with the agent module of that name. If the output directory already holds the
-agent's checkpoint (`<agent>_16f.pt`), it is loaded and training continues:
+agent's checkpoint (`<agent>_<frames>f.pt`), it is loaded and training continues:
 exploration then starts at its minimum, or at the saved rate with
 `--always-explore true`. Ctrl-C stops training and saves the model.
 `ros2 launch neuroracer_gym_rl start.launch agent:=dqn` starts the same, and
@@ -47,18 +48,18 @@ episode with -100. `NeuroRacer-v1` steers continuously in [-1, 1] at
 
 The simulator is stepped on the main thread and every transition is appended to
 the agent's cyclic replay buffer `H5Buffer` in `<output>/buffer.hdf5`. Its
-capacity (1,000,000 transitions, about 7 GB) is limited by disk, not RAM: the
+capacity (1,000,000 transitions, up to 150 GB) is limited by disk, not RAM: the
 larger it is, the longer rare and old experience stays in training, which
 counters catastrophic forgetting. Each preprocessed frame is stored once and
 stacks are rebuilt when read. The file is deleted when training ends.
 
 A learner thread calls the agent's `replay()` continuously as soon as the buffer
-holds one batch. `replay()` works as before: it takes two chunks of 20,000
-transitions (one while the buffer is smaller than two), now random contiguous
-blocks read into GPU memory, computes their Q targets once with the model as
-it is before the chunk (`double_*`: with the target model, which is updated
-every 10 replays), and fits one shuffled epoch. The car then drives with the new
-weights. The GPU runs targets and gradients in micro-batches of 128 (a batch's
+holds one batch. `replay()` works as before: it takes two chunks of 5,000
+transitions (one while the buffer is smaller than two; 750 MB each), now random
+contiguous blocks read into GPU memory, computes their Q targets once before fitting the
+chunk (the next-state values with the EMA target network), and fits one
+shuffled epoch. The EMA follows the model after every optimizer step, and the
+car drives with the EMA. The GPU runs targets and gradients in micro-batches of 128 (a batch's
 gradients are summed before its optimizer step, so updates are unchanged) and
 the learner waits for each one: CUDA executes work in the order it was queued,
 so long or queued-up training work would delay every driving decision. Exploration decays every 1,000 collected steps and the model is saved
@@ -82,25 +83,28 @@ sudo systemctl restart docker
 
 ## Agents
 
-The agents are PyTorch ports of the original Keras models, with their
-hyperparameters (Keras default initialization, Adam with lr 0.001, MSE, γ 0.9;
-exploration 0.85, ×0.99 per 1,000 steps, down to 0.01):
+Both agents use a standard timm `resnet18` (average pooling, linear head) trained
+from scratch on the camera image (`in_chans=3`, or 3 per frame with `--frames`), and an exponential moving average (EMA, timm's `ModelEmaV3`) of
+their weights as the target network, updated after every optimizer step. The car
+drives with the EMA network. Otherwise the original hyperparameters are kept
+(Adam with lr 0.001, MSE, γ 0.9; exploration 0.85, ×0.99 per 1,000 steps, down to
+0.01):
 
-| Agent | Model | Targets | Batch |
+| Agent | Model | Target network | Batch |
 | --- | --- | --- | --- |
-| dqn | CNN (16, 32, 64 filters, LeakyReLU, dropout) → 256 → 128 | the model | 1000 |
-| double_dqn | Same CNN | target model | 1000 |
-| drqn | Same CNN per frame → LSTM 512 | the model | 128 |
-| double_drqn | Same CNN per frame → LSTM 512 | target model | 128 |
-| ddpg | Actor and critic: 3 × Conv 32 → 200 (keras-rl DDPG) | soft target models (τ 0.001) | 16 |
+| dqn | resnet18 → 3 Q-values | EMA, decay 0.995 | 1000 |
+| ddpg | Actor: resnet18 → tanh. Critic: resnet18 → 200, with the action → 200 → 1 (keras-rl DDPG) | EMAs, decay 0.999 (τ 0.001) | 16 |
 
-Preprocessing crops the top 200 pixels, converts to grayscale, resizes to
-56×128 and stacks 16 frames. DDPG explores with Ornstein-Uhlenbeck noise and
+Preprocessing crops the top 200 pixels and resizes the RGB image to resnet18's
+native 224×224; with `--frames N` a state stacks the RGB channels of the last N
+images, oldest first. The notebook's Q-value grid shows which image regions
+favour each action: resnet18's head applied to every cell of its last 7×7
+feature map, whose mean is the Q-value. DDPG explores with Ornstein-Uhlenbeck noise and
 trains after 500 warmup steps. Only termination masks the Bellman bootstrap.
 
 ## Checkpoints and logs
 
-`<agent>_16f.pt` is written atomically and holds the network and optimizer
+`<agent>_<frames>f.pt` is written atomically and holds the network and optimizer
 states, the exploration rate and the step and episode counters. It is loaded
 with `torch.load(weights_only=True)`. The replay buffer is not saved; after a
 restart training continues once it holds one batch again.

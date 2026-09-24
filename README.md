@@ -37,7 +37,7 @@ Start training in the second terminal:
 ```bash
 ./scripts/dev train <agent name>
 ```
-There are 5 implemented agents: `dqn`, `double_dqn`, `drqn`, `double_drqn` and `ddpg`. The same can be started with `ros2 launch neuroracer_gym_rl start.launch agent:=<agent name>` in `./scripts/dev shell`.
+There are 2 implemented agents, both on a timm resnet18: `dqn` and `ddpg`. The same can be started with `ros2 launch neuroracer_gym_rl start.launch agent:=<agent name>` in `./scripts/dev shell`.
 See [training details](docs/pytorch-training.md).
 
 # WSL and headless setup #

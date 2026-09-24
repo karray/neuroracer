@@ -9,6 +9,8 @@ ENV PATH="/opt/neuroracer-venv/bin:${PATH}"
 # The CUDA 13.0 wheel (NVIDIA driver 580 or newer) also runs without a GPU; build
 # with --build-arg TORCH_VARIANT=cpu for a smaller CPU-only image.
 ARG TORCH_VARIANT=cu130
+# PyTorch first, so timm's torchvision requirement is met by the matching build.
+RUN pip install --no-cache-dir torch==2.14.0+${TORCH_VARIANT} torchvision==0.29.0+${TORCH_VARIANT} \
+    --index-url https://download.pytorch.org/whl/${TORCH_VARIANT}
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
-    pip install --no-cache-dir torch==2.14.0+${TORCH_VARIANT} --index-url https://download.pytorch.org/whl/${TORCH_VARIANT}
+RUN pip install --no-cache-dir -r /tmp/requirements.txt

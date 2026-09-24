@@ -9,19 +9,21 @@ import gymnasium as gym
 from utils import H5Buffer, preprocess
 from neuroracer_discrete import NeuroRacer
 
-AGENTS = ('dqn', 'double_dqn', 'drqn', 'double_drqn', 'ddpg')
+AGENTS = ('dqn', 'ddpg')
 
 
-def test_preprocess_crops_and_scales_to_uint8():
+def test_preprocess_crops_resizes_and_converts_bgr_to_rgb():
     image = np.zeros((480, 640, 3), dtype=np.uint8)
-    image[:200] = 255
-    frame = preprocess(image, 200, 0.2, 0.2)
-    assert frame.shape == (56, 128) and frame.dtype == np.uint8 and frame.max() == 0
+    image[:200] = 255  # cropped away
+    image[200:, :, 0] = 50  # blue in BGR
+    frame = preprocess(image, 200, 224)
+    assert frame.shape == (3, 224, 224) and frame.dtype == np.uint8
+    assert (frame[2] == 50).all() and frame[:2].max() == 0
 
 
 def test_buffer_blocks_rebuild_frame_stacks(tmp_path):
     buffer = H5Buffer((2, 2, 3), 12, str(tmp_path / 'buffer.hdf5'))
-    frame = lambda value: np.full((2, 2), value, np.uint8)
+    frame = lambda value: np.full((3, 2, 2), value, np.uint8)
     expected, value = {}, 0
     for length in (2, 5, 1, 6):  # 18 rows wrap the 12-row buffer.
         state = [value] * 3
@@ -39,8 +41,10 @@ def test_buffer_blocks_rebuild_frame_stacks(tmp_path):
         batch = block.batch(block.transitions)
         for index, reward in enumerate(batch['rewards'].tolist()):
             states, next_states, action, terminate = expected[reward]
-            assert batch['states'][index][:, 0, 0].tolist() == states
-            assert batch['next_states'][index][:, 0, 0].tolist() == next_states
+            # States stack the frames' RGB channels, oldest first.
+            assert batch['states'][index].shape == (9, 2, 2)
+            assert batch['states'][index][::3, 0, 0].tolist() == states
+            assert batch['next_states'][index][::3, 0, 0].tolist() == next_states
             assert (batch['actions'][index].item(), batch['terminates'][index].item()) == (action, terminate)
             seen.add(reward)
     # Transitions whose earlier frames were overwritten are never sampled.
@@ -52,7 +56,7 @@ def test_buffer_blocks_rebuild_frame_stacks(tmp_path):
 def make_agent(name, working_dir, **kwargs):
     module = __import__(name)
     action_size = 1 if name == 'ddpg' else 3
-    agent = module.Agent((12, 16, 2), action_size, 64, 16, add_flipped=name == 'dqn', working_dir=str(working_dir), **kwargs)
+    agent = module.Agent((64, 64, 2), action_size, 64, 16, add_flipped=name == 'dqn', working_dir=str(working_dir), **kwargs)
     agent.batch_size, agent.nb_steps_warmup = 4, 0
     return agent
 
@@ -62,20 +66,24 @@ def test_replay_trains_saves_and_resumes(name, tmp_path):
     agent = make_agent(name, tmp_path)
     rng = np.random.default_rng(0)
     for episode in range(3):
-        agent.buffer.start_episode(rng.integers(0, 256, (12, 16), dtype=np.uint8))
+        agent.buffer.start_episode(rng.integers(0, 256, (3, 64, 64), dtype=np.uint8))
         for step in range(8):
             action = np.float32([rng.uniform(-1, 1)]) if name == 'ddpg' else int(rng.integers(3))
-            agent.buffer.append(action, rng.integers(0, 256, (12, 16), dtype=np.uint8), 1.0, step == 7)
+            agent.buffer.append(action, rng.integers(0, 256, (3, 64, 64), dtype=np.uint8), 1.0, step == 7)
     model = agent.actor if name == 'ddpg' else agent.model
+    ema = agent.target_actor if name == 'ddpg' else agent.target_model
     before = [parameter.detach().clone() for parameter in model.parameters()]
+    ema_before = [parameter.detach().clone() for parameter in ema.module.parameters()]
     agent.progress['steps'] = 24
     agent.save_requested = True
     agent.replay()
     assert np.isfinite(agent.loss) and not agent.save_requested
     assert any(not torch.equal(old, new) for old, new in zip(before, model.parameters()))
-    # The acting copy is refreshed after each replay.
-    assert all(torch.equal(a, b) for a, b in zip(agent.policy.copy.parameters(), model.parameters()))
-    action = agent.act(rng.integers(0, 256, (1, 2, 12, 16), dtype=np.uint8))
+    # The EMA, which the car drives with, follows the model after every optimizer step.
+    ema_after = list(ema.module.parameters())
+    assert any(not torch.equal(old, new) for old, new in zip(ema_before, ema_after))
+    assert any(not torch.equal(a, b) for a, b in zip(ema_after, model.parameters()))
+    action = agent.act(rng.integers(0, 256, (1, 6, 64, 64), dtype=np.uint8))
     if name == 'ddpg':
         assert action.shape == (1,) and action.dtype == np.float32 and abs(action[0]) <= 1
     else:
@@ -84,8 +92,10 @@ def test_replay_trains_saves_and_resumes(name, tmp_path):
 
     resumed = make_agent(name, tmp_path)
     resumed_model = resumed.actor if name == 'ddpg' else resumed.model
+    resumed_ema = resumed.target_actor if name == 'ddpg' else resumed.target_model
     assert resumed.progress['steps'] == 24
     assert all(torch.equal(a, b) for a, b in zip(resumed_model.parameters(), model.parameters()))
+    assert all(torch.equal(a, b) for a, b in zip(resumed_ema.module.parameters(), ema.module.parameters()))
     if name != 'ddpg':
         assert resumed.exploration_rate == resumed.exploration_min
     resumed.buffer.close()

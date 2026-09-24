@@ -13,9 +13,6 @@ install(FILES
   scripts/neuroracer_discrete.py
   scripts/utils.py
   scripts/dqn.py
-  scripts/double_dqn.py
-  scripts/drqn.py
-  scripts/double_drqn.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
