@@ -3,12 +3,32 @@ import json
 import os
 import signal
 import time
+import uuid
 
 import numpy as np
 import gymnasium as gym
+import rclpy
+from rclpy.context import Context
+from std_msgs.msg import String
 
 from neuroracer_gym.tasks import neuroracer_discrete_task, neuroracer_continuous_task
 from utils import context, preprocess, loader, loginfo
+
+
+class Telemetry():
+    """JSON on a ROS topic, which the bridge forwards to GzWeb's telemetry panel."""
+    def __init__(self, topic):
+        self.context = Context()
+        rclpy.init(context=self.context)
+        self.node = rclpy.create_node('telemetry_' + uuid.uuid4().hex[:8], context=self.context)
+        self.publisher = self.node.create_publisher(String, topic, 1)
+
+    def publish(self, **values):
+        self.publisher.publish(String(data=json.dumps(values)))
+
+    def close(self):
+        self.node.destroy_node()
+        self.context.shutdown()
 
 
 class Learner(context.Process):
@@ -27,17 +47,26 @@ class Learner(context.Process):
         signal.signal(signal.SIGINT, signal.SIG_IGN)  # The car's process stops the learner.
         agent, buffer = self.agent, self.agent.buffer
         self.recent = []  # (loss, Q, dropped transitions) of each update since the last save
+        telemetry = Telemetry('/telemetry/learner')
         while buffer.count[0] < self.warmup_steps and not self.stopping.wait(0.1):
-            pass
+            telemetry.publish(buffer=int(buffer.count[0]), warmup_steps=self.warmup_steps)
         if not self.stopping.is_set():
+            published = time.monotonic(), agent.progress['updates']
             for batch in loader(buffer, agent.batch_size):
                 if self.stopping.is_set():
                     break
                 agent.replay(batch)
                 self.recent.append((agent.loss, agent.q, agent.batch_size - len(batch['rewards'])))
+                if time.monotonic() - published[0] >= 1:
+                    updates = agent.progress['updates']
+                    telemetry.publish(updates=updates, epoch=updates // agent.updates_per_epoch, loss=agent.loss,
+                                      q=agent.q, updates_per_s=(updates - published[1]) / (time.monotonic() - published[0]),
+                                      buffer=int(buffer.count[0]))
+                    published = time.monotonic(), updates
                 if self.saving.is_set():
                     self._save()
         self._save()
+        telemetry.close()
         del self.agent  # Releases the GPU memory shared with the car's process, which owns it.
 
     def _save(self):
@@ -104,6 +133,7 @@ class NeuroRacer:
         steps = 0
         progress = self.agent.progress
         learner = Learner(self.agent, self.warmup_steps, os.path.join(self.working_dir, 'updates.jsonl'))
+        telemetry = Telemetry('/telemetry/car')
 
         try:
             learner.start()
@@ -141,6 +171,10 @@ class NeuroRacer:
 
                     cumulated_reward += reward
                     progress['steps'] += 1
+                    telemetry.publish(step=progress['steps'], episode=progress['episodes'] + 1, episode_step=episode_steps,
+                                      action=np.asarray(action).tolist(), reward=float(reward), crashed=bool(terminated),
+                                      episode_return=float(cumulated_reward), exploration=self.agent.exploration_rate,
+                                      start=info.get('start'))
 
                     if progress['steps'] % self.sample_batch_size == 0:
                         learner.save(progress)
@@ -168,6 +202,7 @@ class NeuroRacer:
             try:
                 learner.stop(progress)
             finally:
+                telemetry.close()
                 self.env.close()
             loginfo("Total time: {}".format(self.format_time(total_time)))
             loginfo("Total steps: {}".format(steps))
