@@ -1,4 +1,5 @@
 import numpy as np
+from neuroracer_gym.neuroracer_env import NeuroRacerEnv, START_POINTS
 from neuroracer_gym.tasks.neuroracer_discrete_task import NeuroRacerDiscreteTask
 
 
@@ -32,3 +33,11 @@ def test_steering_command_uses_servo_speed_mapping():
     command = task(np.full(1081, 5.0))._create_steering_command(1.0, 1)
     assert np.isclose(command.linear.x, 0.5)
     assert np.isclose(command.angular.z, 0.5 * np.tan(1.0) / 0.325)
+
+
+def test_episodes_start_at_the_start_points_with_random_headings():
+    env = NeuroRacerEnv.__new__(NeuroRacerEnv)  # No ROS connection.
+    starts = [env._random_start() for _ in range(200)]
+    assert {(s['p_x'], s['p_y']) for s in starts} == set(START_POINTS)
+    assert len({round(s['o_z'], 6) for s in starts}) == 200
+    assert START_POINTS[env.start] == (starts[-1]['p_x'], starts[-1]['p_y'])

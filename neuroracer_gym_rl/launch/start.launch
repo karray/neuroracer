@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-    <arg name="agent" />
+    <arg name="config" />
 
     <!-- Launch the training system -->
     
     <node pkg="neuroracer_gym_rl" name="neuroracer_gym_rl" exec="training.py" output="screen"
-          args="$(var agent)"/>
+          args="$(var config)"/>
 </launch>

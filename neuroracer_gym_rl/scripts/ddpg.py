@@ -10,9 +10,6 @@ from torch import nn
 
 from utils import ReplayBuffer, convnet, Normalize, EMA, autocast, to_device, save_checkpoint, load_checkpoint, loginfo
 
-env_id = 'NeuroRacer-v1'
-
-
 class OrnsteinUhlenbeckProcess:
     def __init__(self, theta, mu=0., sigma=1., dt=1e-2, size=1):
         self.theta, self.mu, self.sigma, self.dt, self.size = theta, mu, sigma, dt, size
@@ -38,31 +35,35 @@ class Critic(nn.Module):
 
 
 class Agent:
-    def __init__(self, state_size, action_size, buffer_max_size, add_flipped, working_dir='.'):
+    def __init__(self, state_size, action_size, buffer_max_size=1000000, working_dir='.', batch_size=16,
+                 learning_rate_actor=0.0001, learning_rate_critic=0.001, gamma=0.9, ema_decay=0.999, l2=0.01):
         self.weight_backup      = os.path.join(working_dir, 'ddpg_{}f.pt'.format(state_size[2]))
 
         self.state_size = state_size
         self.nb_actions  = action_size
-        self.batch_size = 16
+        self.batch_size = batch_size
         self.buffer = ReplayBuffer(state_size, buffer_max_size, os.path.join(working_dir, 'buffer'),
                                action_shape=(action_size,), action_dtype=np.float32)
-        self.learning_rate_actor = 0.0001
-        self.learning_rate_critic = 0.001
-        self.gamma              = 0.9
+        self.learning_rate_actor = learning_rate_actor
+        self.learning_rate_critic = learning_rate_critic
+        self.gamma              = gamma
         self.exploration_rate   = None
-        self.nb_steps_warmup    = 500
-        self.ema_decay          = 0.999
-        self.l2 = 0.01
+        self.ema_decay          = ema_decay
+        self.l2 = l2
         self.device             = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.progress           = {'steps': 0, 'episodes': 0}
+        self.progress           = {'steps': 0, 'episodes': 0, 'updates': 0}
         self.loss               = None
+        self.q                  = None
 
         self.random_process = OrnsteinUhlenbeckProcess(size=self.nb_actions, theta=.15, mu=0., sigma=.2)
 
         self.actor = self._create_actor().to(self.device)
         self.critic = self._create_critic().to(self.device)
-        self.target_actor = EMA(self.actor, self.ema_decay)
-        self.target_critic = EMA(self.critic, self.ema_decay)
+        # The targets follow once per epoch, as many updates as a full buffer has batches, by the
+        # per-update decay compounded over the epoch.
+        self.updates_per_epoch = buffer_max_size // batch_size
+        self.target_actor = EMA(self.actor, self.ema_decay ** self.updates_per_epoch)
+        self.target_critic = EMA(self.critic, self.ema_decay ** self.updates_per_epoch)
         self.actor.optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.learning_rate_actor, eps=1e-7)
         self.critic.optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.learning_rate_critic, eps=1e-7)
 
@@ -113,8 +114,6 @@ class Agent:
         model.optimizer.step()
 
     def replay(self, batch):
-        if self.buffer.length() < self.nb_steps_warmup:
-            return False
         batch = to_device(batch, self.device)
         states, actions = batch['states'], batch['actions']
         self.actor.train()
@@ -131,11 +130,14 @@ class Agent:
         with autocast(self.device):
             actor_loss = -self.critic(states, self.actor(states)).float().mean()
         self._optimize(self.actor, actor_loss)
-        self.target_actor.update(self.actor)
-        self.target_critic.update(self.critic)
+        self.progress['updates'] += 1
+        if self.progress['updates'] % self.updates_per_epoch == 0:
+            self.target_actor.update(self.actor)
+            self.target_critic.update(self.critic)
         self.loss = float(critic_loss.detach())
+        self.q = float(values.detach().float().mean())
 
 
 if __name__ == '__main__':
     from training import main
-    main([sys.argv[0], 'ddpg'] + sys.argv[1:])
+    main([sys.argv[0], 'experiments/ddpg.toml'] + sys.argv[1:])

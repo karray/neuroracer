@@ -36,6 +36,6 @@ case "${1:-help}" in
     echo 'Jupyter Lab: http://localhost:8888/lab/tree/q_learning.ipynb'
     exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" jupyter lab --ip 0.0.0.0 --port 8888 --no-browser --IdentityProvider.token='' --ServerApp.password=''
     ;;
-  help|-h|--help) echo "Usage: $0 {setup|build|up|down|shell|check|check-sim|sim|web|vnc|notebook|train AGENT [options]}" ;;
+  help|-h|--help) echo "Usage: $0 {setup|build|up|down|shell|check|check-sim|sim|web|vnc|notebook|train CONFIG [--resume]}" ;;
   *) echo "Unknown command: $1" >&2; exit 2 ;;
 esac

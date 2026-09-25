@@ -3,16 +3,29 @@
 Start `./scripts/dev web` or `sim` first and keep it running.
 
 ```bash
-./scripts/dev train dqn                          # runs/dqn, 200,000 steps
-./scripts/dev train dqn --output runs/first-run --steps 50000
-./scripts/dev train dqn --frames 4                # stack 4 camera images per state
-./scripts/dev train --help
+./scripts/dev train experiments/dqn.toml            # a new run in runs/dqn
+./scripts/dev train experiments/dqn.toml --resume   # continue it
 ```
 
-An existing checkpoint (`<output>/<agent>_<frames>f.pt`) is loaded and training
-continues. Ctrl-C stops training and saves the model. `ddpg.py` or
-`ddpg_learning.launch` trains DDPG on `NeuroRacer-v1`. Evaluation is in
-`q_learning.ipynb` (`./scripts/dev notebook`).
+An experiment is a TOML file in `experiments/`:
+
+- `[agent]` names the agent class and overrides defaults of its keyword
+  arguments, e.g. `gamma`, `learning_rate`, `batch_size`, `ema_decay`, the
+  exploration schedule and `buffer_max_size` of `dqn.Agent`.
+- `[training]` overrides defaults of `NeuroRacer`'s keyword arguments: the task
+  `env_id`, `n_steps` in total (4,000,000), `max_episode_steps` (10,000),
+  `n_frames`, `warmup_steps` and the save interval `sample_batch_size`.
+- `seed` seeds Python, NumPy and PyTorch.
+
+A different network is a new agent class, and a different reward a new task
+registered with gymnasium; a config then names it.
+
+The run folder `runs/<config name>/` holds `config.json` with every value used,
+the checkpoint, `episodes.jsonl`, `updates.jsonl` and the replay buffer. A new run
+refuses an existing folder. `--resume` continues a run when the config differs
+only in `n_steps`, with its replay buffer. Ctrl-C stops training and saves the
+model. `ddpg.py` or `ddpg_learning.launch` trains `experiments/ddpg.toml` (DDPG on
+`NeuroRacer-v1`). Evaluation is in `q_learning.ipynb` (`./scripts/dev notebook`).
 
 ## Environment
 
@@ -20,8 +33,8 @@ continues. Ctrl-C stops training and saves the model. `ddpg.py` or
   `NeuroRacer-v1`: continuous steering in [-1, 1].
 - Observations are 480×640 BGR camera images.
 - Each step advances the paused world by 0.1 s.
-- Each episode starts at a random x in [1, 4] with a random heading. Training
-  truncates episodes after 1,200 steps (`--max-episode-steps`).
+- Each episode starts at one of four points (x = 1, 2, 3, 4 at y = 3.7) with a
+  random heading. Training truncates episodes after `max_episode_steps`.
 
 ## Training
 
@@ -29,40 +42,45 @@ Training runs in two processes that share the agent:
 
 - The car's process steps the simulator, picks actions with the EMA of the
   network's weights, writes each transition to the replay buffer and logs every
-  episode to `metrics.jsonl` in the output directory.
-- The learner process (`Learner` in `neuroracer_discrete.py`) trains the network
-  continuously on uniformly random batches that four `DataLoader` worker
-  processes read from the buffer. It updates the EMA, which is also the target
-  network, after each step and saves the checkpoint every 1,000 collected steps
-  and when training ends.
+  episode to `episodes.jsonl`: length, return, whether it crashed, start point.
+- The learner process (`Learner` in `neuroracer_discrete.py`) starts after
+  `warmup_steps` collected steps and then trains the network continuously on
+  uniformly random batches that four `DataLoader` worker processes read from
+  the buffer. Once per epoch, as many updates as a full buffer has batches
+  (1,000,000 / 256 ≈ 3,900 for DQN), it moves the EMA, which is also the target
+  network, towards the network. Every 1,000 collected steps and when training
+  ends it saves the checkpoint and appends to `updates.jsonl`: the number of
+  updates, mean loss and Q-value, and dropped transitions.
 
 They share:
 
-- The replay buffer: memory-mapped files in `<output>/buffer/` (1,000,000
-  transitions, about 7 GB), deleted when training ends. The car writes and the
-  workers read. A transition that was overwritten while it was read is dropped
-  from its batch.
+- The replay buffer: memory-mapped files in `runs/<config name>/buffer/`
+  (1,000,000 transitions, about 7 GB), kept for `--resume`; delete runs you no
+  longer need. The car writes and the workers read. A transition that was
+  overwritten while it was read is dropped from its batch.
 - The agent's tensors, through CUDA IPC. The learner updates them in place and a
   lock keeps the car from driving with a half-updated EMA.
-- The collected steps and episodes for the checkpoint, the latest loss, and the
-  save and stop signals.
+- The collected steps and episodes for the checkpoint, and the save and stop
+  signals.
 
 Side effects:
 
-- Both processes run at their own speed, so the number of updates per collected
-  step depends on the hardware. On an RTX 3060 Ti the car collects about 22
-  steps/s and the learner makes about 1.7 updates/s, so each transition is
-  sampled about 20 times on average.
-- The car drives with weights at most one update old, and a run is not
-  reproducible from `--seed`.
+- Neither process waits for the other, so the number of updates per collected
+  step depends on the hardware: on an RTX 3060 Ti about 3 (81 updates/s at 25
+  steps/s). `updates.jsonl` records it.
+- The car drives with the EMA of the latest epoch, and a run is not
+  reproducible from `seed`.
 - Ctrl-C stops the car's process, which lets the learner finish its update and
   save.
-- The loss in `metrics.jsonl` is `NaN` until the first update.
 
-| Agent | Network | EMA decay | Batch | Loss |
+| Agent | Network | EMA decay per update | Batch | Loss |
 | --- | --- | --- | --- | --- |
-| dqn | convolutions → 512 → 3 Q-values | 0.995 | 256 | Huber, Double DQN, γ 0.99 |
+| dqn | convolutions → 512 → 3 Q-values | 0.9998 | 256 | Huber, Double DQN, γ 0.99 |
 | ddpg | convolutions → actor and critic | 0.999 | 16 | MSE, γ 0.9 |
+
+`ema_decay` is per update, as in timm's `ModelEmaV3`, and compounds over the
+epoch: DQN's EMA moves 1 − 0.9998^3,906 ≈ 54% of the way to the network once per
+epoch, DDPG's (0.999 over 62,500 updates) practically the whole way.
 
 The networks start with four 3×3 convolutions with stride 2 (32, 64, 64 and 128
 channels) on 56×128 grayscale images: the camera image without its top 200

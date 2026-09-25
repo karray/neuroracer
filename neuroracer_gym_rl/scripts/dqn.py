@@ -9,7 +9,9 @@ from torch import nn
 from utils import ReplayBuffer, convnet, Normalize, autocast, fit, to_device, EMA, save_checkpoint, load_checkpoint, loginfo
 
 class Agent():
-    def __init__(self, state_size, action_size, buffer_max_size, add_flipped, working_dir='.'):
+    def __init__(self, state_size, action_size, buffer_max_size=1000000, add_flipped=False, working_dir='.',
+                 batch_size=256, learning_rate=0.0001, gamma=0.99, exploration_start=1.0, exploration_min=0.01,
+                 exploration_steps=50000, ema_decay=0.9998):
         file_name = 'dqn'+'_'+str(state_size[2])+'f'
         if add_flipped:
             file_name+='_flip'
@@ -21,18 +23,22 @@ class Agent():
         self.state_size         = state_size
         self.action_size        = action_size
         self.buffer             = ReplayBuffer(state_size, buffer_max_size, os.path.join(self.working_dir, 'buffer'))
-        self.batch_size         = 256
-        self.learning_rate      = 0.0001
-        self.gamma              = 0.99
-        self.exploration_start  = 1.0
-        self.exploration_min    = 0.01
-        self.exploration_steps  = 50000
-        self.ema_decay          = 0.995
+        self.batch_size         = batch_size
+        self.learning_rate      = learning_rate
+        self.gamma              = gamma
+        self.exploration_start  = exploration_start
+        self.exploration_min    = exploration_min
+        self.exploration_steps  = exploration_steps
+        self.ema_decay          = ema_decay
         self.device             = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.progress           = {'steps': 0, 'episodes': 0}
+        self.progress           = {'steps': 0, 'episodes': 0, 'updates': 0}
         self.loss               = None
+        self.q                  = None
         self.model              = self._build_model()
-        self.target_model       = EMA(self.model, self.ema_decay)
+        # The target follows the model once per epoch, as many updates as a full buffer has
+        # batches, by the per-update decay compounded over the epoch.
+        self.updates_per_epoch  = buffer_max_size // batch_size
+        self.target_model       = EMA(self.model, self.ema_decay ** self.updates_per_epoch)
         self._load_model()
 
 
@@ -89,10 +95,14 @@ class Agent():
 
         with autocast(self.device):
             values = self.model(states).float().gather(1, actions[:, None]).squeeze(1)
+        self.q = float(values.detach().mean())
         return nn.functional.huber_loss(values, targets)
 
     def replay(self, batch):
         batch = to_device(batch, self.device)
         if self.add_flipped:
             batch = self.flip(batch, torch.rand(len(batch['rewards']), device=self.device) < 0.5)
-        self.loss = fit(self.model, batch, self._loss, ema=self.target_model)
+        self.loss = fit(self.model, batch, self._loss)
+        self.progress['updates'] += 1
+        if self.progress['updates'] % self.updates_per_epoch == 0:
+            self.target_model.update(self.model)

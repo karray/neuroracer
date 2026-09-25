@@ -3,7 +3,6 @@
 from functools import partial
 import math
 import os
-import shutil
 
 import cv2
 import numpy as np
@@ -27,6 +26,7 @@ class ReplayBuffer():
     # A row that starts an episode holds its first frame; every other row holds the frame
     # after a transition, with that transition's action, reward and termination.
     # `count` is the number of rows written so far; row n is stored at n % maxlen.
+    # An existing buffer in `path` is reopened, so a resumed run continues with its data.
     def __init__(self, state_shape, maxlen, path='buffer', action_shape=(), action_dtype=np.ubyte):
         self.maxlen = maxlen
         self.n_frames = state_shape[2]
@@ -34,7 +34,13 @@ class ReplayBuffer():
         os.makedirs(path, exist_ok=True)
 
         def array(name, shape, dtype):
-            return np.lib.format.open_memmap(os.path.join(path, name + '.npy'), mode='w+', dtype=dtype, shape=shape)
+            file = os.path.join(path, name + '.npy')
+            if not os.path.exists(file):
+                return np.lib.format.open_memmap(file, mode='w+', dtype=dtype, shape=shape)
+            existing = np.load(file, mmap_mode='r+')
+            if existing.shape != shape or existing.dtype != dtype:
+                raise ValueError(file + ' does not match the buffer size, frame size or action type')
+            return existing
         self.frames = array('frames', (maxlen,) + state_shape[:2], np.uint8)
         self.first = array('first', (maxlen,), np.bool_)
         self.actions = array('actions', (maxlen,) + action_shape, action_dtype)
@@ -63,13 +69,6 @@ class ReplayBuffer():
 
     def append(self, action, next_frame, reward, terminate):
         self._write(next_frame, False, action, float(reward), bool(terminate))
-
-    def length(self):
-        return min(int(self.count[0]), self.maxlen)
-
-    def close(self):
-        if os.path.isdir(self.path):
-            shutil.rmtree(self.path)
 
 
 class ReplayDataset(Dataset):
@@ -149,14 +148,12 @@ def autocast(device):
     return torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == 'cuda')
 
 
-def fit(model, batch, loss, ema=None):
+def fit(model, batch, loss):
     model.train()
     model.optimizer.zero_grad()
     batch_loss = loss(batch)
     batch_loss.backward()
     model.optimizer.step()
-    if ema is not None:
-        ema.update(model)
     return float(batch_loss.detach())
 
 

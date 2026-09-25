@@ -25,9 +25,8 @@ WHEELBASE = 0.325
 WHEEL_RADIUS = 0.05
 STEP_SIZE = 0.001  # racecar_tunnel.sdf max_step_size
 PERIOD = 0.1  # model.sdf sensor update period
-# racecar_tunnel.sdf spawn pose
-SPAWN_POSITION = {'p_x': 2.0, 'p_y': 3.7, 'p_z': 0.05, 'o_x': 0.0, 'o_y': 0.0,
-                  'o_z': math.sin(math.pi / 4), 'o_w': math.cos(math.pi / 4)}
+# Start points (x, y) in racecar_tunnel.sdf; each episode starts at one of them with a random heading.
+START_POINTS = ((1.0, 3.7), (2.0, 3.7), (3.0, 3.7), (4.0, 3.7))
 
 class NeuroRacerEnv(gym.Env):
     def __init__(self):
@@ -69,7 +68,8 @@ class NeuroRacerEnv(gym.Env):
 
     def reset_position(self):
         # Teleport: a Gazebo Jetty world reset recreates plugins without a Reset hook.
-        position = self.initial_position or SPAWN_POSITION
+        self.start = None
+        position = self.initial_position or self._random_start()
         q = np.array([position['o_x'], position['o_y'], position['o_z'], position['o_w']], dtype=np.float64)
         q /= np.linalg.norm(q)
         state_msg = SetEntityPose.Request()
@@ -83,6 +83,12 @@ class NeuroRacerEnv(gym.Env):
 
         self._call(self.set_model_state, state_msg)
 
+    def _random_start(self):
+        self.start = int(self.np_random.integers(len(START_POINTS)))
+        x, y = START_POINTS[self.start]
+        yaw = self.np_random.uniform(-math.pi, math.pi)
+        return {'p_x': x, 'p_y': y, 'p_z': 0.05, 'o_x': 0.0, 'o_y': 0.0, 'o_z': math.sin(yaw / 2), 'o_w': math.cos(yaw / 2)}
+
     def reset(self, *, seed=None, options=None):
         super(NeuroRacerEnv, self).reset(seed=seed)
         self._check_publishers_connection()
@@ -93,7 +99,7 @@ class NeuroRacerEnv(gym.Env):
         self._advance()
         self._init_env_variables()
 
-        return self._get_obs(), self._info()
+        return self._get_obs(), {**self._info(), 'start': self.start}
 
     def step(self, action):
         if not self.action_space.contains(action):

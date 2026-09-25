@@ -35,9 +35,9 @@ Only one simulator and one controller may run at a time.
 
 Start training in the second terminal:
 ```bash
-./scripts/dev train <agent name>
+./scripts/dev train experiments/dqn.toml
 ```
-There are 2 implemented agents, both on a timm resnet18: `dqn` and `ddpg`. The same can be started with `ros2 launch neuroracer_gym_rl start.launch agent:=<agent name>` in `./scripts/dev shell`.
+An experiment is a config in `experiments/`; there are 2 implemented agents: `dqn` and `ddpg`. The same can be started with `ros2 launch neuroracer_gym_rl start.launch config:=experiments/dqn.toml` in `./scripts/dev shell`.
 See [training details](docs/pytorch-training.md).
 
 # Headless setup #

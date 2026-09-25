@@ -14,26 +14,27 @@ from utils import context, preprocess, loader, loginfo
 class Learner(context.Process):
     """Trains the agent in its own process. The agent's tensors are shared with the car's process,
     which drives with the EMA network; checkpoints are saved with the car's progress."""
-    def __init__(self, agent):
+    def __init__(self, agent, warmup_steps, metrics_path):
         super(Learner, self).__init__(name='learner')
         self.agent = agent
+        self.warmup_steps = max(warmup_steps, agent.batch_size)
+        self.metrics_path = metrics_path
         self.progress = context.Array('q', 2)
         self.saving = context.Event()
         self.stopping = context.Event()
-        self.loss = context.Value('d', float('nan'))
 
     def run(self):
         signal.signal(signal.SIGINT, signal.SIG_IGN)  # The car's process stops the learner.
-        while self.agent.buffer.length() < self.agent.batch_size and not self.stopping.wait(0.1):
+        agent, buffer = self.agent, self.agent.buffer
+        self.recent = []  # (loss, Q, dropped transitions) of each update since the last save
+        while buffer.count[0] < self.warmup_steps and not self.stopping.wait(0.1):
             pass
         if not self.stopping.is_set():
-            for batch in loader(self.agent.buffer, self.agent.batch_size):
+            for batch in loader(buffer, agent.batch_size):
                 if self.stopping.is_set():
                     break
-                if self.agent.replay(batch) is False:
-                    self.stopping.wait(0.1)
-                    continue
-                self.loss.value = self.agent.loss
+                agent.replay(batch)
+                self.recent.append((agent.loss, agent.q, agent.batch_size - len(batch['rewards'])))
                 if self.saving.is_set():
                     self._save()
         self._save()
@@ -41,8 +42,15 @@ class Learner(context.Process):
 
     def _save(self):
         self.saving.clear()
-        self.agent.progress = {'steps': self.progress[0], 'episodes': self.progress[1]}
+        self.agent.progress.update(steps=self.progress[0], episodes=self.progress[1])
         self.agent.save_model()
+        if self.recent:
+            loss, q, dropped = np.array(self.recent).T
+            with open(self.metrics_path, 'a') as metrics:
+                metrics.write(json.dumps({'step': self.progress[0], 'updates': self.agent.progress['updates'],
+                                          'loss': loss.mean(), 'q': q.mean(), 'dropped': int(dropped.sum()),
+                                          'time': time.time()}) + '\n')
+            self.recent = []
 
     def save(self, progress):
         self.progress[:] = [progress['steps'], progress['episodes']]
@@ -56,9 +64,11 @@ class Learner(context.Process):
 
 
 class NeuroRacer:
-    def __init__(self, agent_class, sample_batch_size, n_frames, buffer_max_size, add_flipped,
-                 env_id='NeuroRacer-v0', working_dir='.', max_episode_steps=1200):
+    def __init__(self, agent_class, working_dir, env_id='NeuroRacer-v0', n_steps=4000000, max_episode_steps=10000,
+                 n_frames=1, sample_batch_size=1000, warmup_steps=1000):
         self.sample_batch_size = sample_batch_size
+        self.n_steps           = n_steps
+        self.warmup_steps      = warmup_steps
         self.env               = gym.make(env_id, max_episode_steps=max_episode_steps)
 
         self.highest_reward    = -np.inf
@@ -78,10 +88,8 @@ class NeuroRacer:
             self.action_size   = self.env.action_space.n
         else:
             self.action_size   = self.env.action_space.shape[0]
-        os.makedirs(working_dir, exist_ok=True)
-        self.agent             = agent_class(self.state_size, self.action_size, buffer_max_size, add_flipped,
-                                             working_dir=working_dir)
-        self.metrics_path      = os.path.join(working_dir, 'metrics.jsonl')
+        self.agent             = agent_class(self.state_size, self.action_size, working_dir=working_dir)
+        self.working_dir       = working_dir
 
 
     def format_time(self, t):
@@ -91,24 +99,20 @@ class NeuroRacer:
 
 
 
-    def run(self, n_steps=None):
-        if n_steps is None:
-            n_steps = self.sample_batch_size*200
+    def run(self):
         total_time = time.time()
         steps = 0
         progress = self.agent.progress
-        learner = Learner(self.agent)
+        learner = Learner(self.agent, self.warmup_steps, os.path.join(self.working_dir, 'updates.jsonl'))
 
         try:
             learner.start()
-            do_training = True
+            do_training = progress['steps'] < self.n_steps
 
             while do_training:
                 episode_time = time.time()
 
-                yaw = np.random.uniform(-np.pi, np.pi)
-                self.env.unwrapped.initial_position = {'p_x': np.random.uniform(1,4), 'p_y': 3.7, 'p_z': 0.05, 'o_x': 0, 'o_y': 0.0, 'o_z': np.sin(yaw/2), 'o_w': np.cos(yaw/2)}
-                state, _ = self.env.reset()
+                state, info = self.env.reset()
                 state = preprocess(state, self.img_y_offset, self.img_x_scale, self.img_y_scale)
                 self.agent.buffer.start_episode(state)
 
@@ -138,9 +142,9 @@ class NeuroRacer:
                     cumulated_reward += reward
                     progress['steps'] += 1
 
-                    if steps % self.sample_batch_size == 0:
+                    if progress['steps'] % self.sample_batch_size == 0:
                         learner.save(progress)
-                        if steps >= n_steps:
+                        if progress['steps'] >= self.n_steps:
                             do_training = False
 
 
@@ -152,11 +156,11 @@ class NeuroRacer:
                 loginfo("Episode time {}, total {}".format(self.format_time(episode_time),
                                                                 self.format_time(total_time)))
                 loginfo("exploration_rate {}".format(self.agent.exploration_rate))
-                with open(self.metrics_path, 'a') as metrics:
+                with open(os.path.join(self.working_dir, 'episodes.jsonl'), 'a') as metrics:
                     metrics.write(json.dumps({'step': progress['steps'], 'episode': progress['episodes'],
                                               'steps': episode_steps, 'return': float(cumulated_reward),
-                                              'exploration_rate': self.agent.exploration_rate, 'loss': learner.loss.value,
-                                              'buffer': self.agent.buffer.length(), 'time': time.time()}) + '\n')
+                                              'crashed': bool(terminated), 'start': info.get('start'),
+                                              'time': time.time()}) + '\n')
 
         except KeyboardInterrupt:
             loginfo("Interrupted; waiting for the current replay to finish")
@@ -164,7 +168,6 @@ class NeuroRacer:
             try:
                 learner.stop(progress)
             finally:
-                self.agent.buffer.close()
                 self.env.close()
             loginfo("Total time: {}".format(self.format_time(total_time)))
             loginfo("Total steps: {}".format(steps))

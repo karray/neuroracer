@@ -2,6 +2,7 @@
 import math
 import numpy as np
 import gymnasium as gym
+from neuroracer_gym.neuroracer_env import START_POINTS
 from neuroracer_gym.tasks import neuroracer_discrete_task, neuroracer_continuous_task  # registers the environments
 
 # The starting straight is finite; eight 0.1 s steps stay well before the wall.
@@ -19,7 +20,7 @@ with gym.make('NeuroRacer-v0', max_episode_steps=8) as env:
     distance = np.linalg.norm(info['position'] - start)
     assert distance > 0.2, ('Car did not move under ROS 2 control', distance)
     image, reset_info = env.reset()
-    assert np.linalg.norm(reset_info['position'] - start) < 0.3, 'Reset did not restore the car'
+    assert np.linalg.norm(reset_info['position'] - START_POINTS[reset_info['start']]) < 0.3, 'Reset did not move the car to its start point'
     print('PASS: ROS 2 RGB camera {}, lidar, {:.2f} m driving, truncation, reset'.format(image.shape, distance))
 
 with gym.make('NeuroRacer-v1') as env:
