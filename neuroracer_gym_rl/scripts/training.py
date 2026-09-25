@@ -52,9 +52,9 @@ def main(argv=None):
             sys.exit('There is no run to resume in ' + working_dir)
         with open(settings_path) as file:
             saved = json.load(file)
-        # Only the number of steps may change: anything else is a new experiment.
+        # Only the number of epochs may change: anything else is a new experiment.
         changed = sorted(key for key in saved.keys() | settings.keys()
-                         if key != 'training.n_steps' and saved.get(key) != settings.get(key))
+                         if key != 'training.n_epochs' and saved.get(key) != settings.get(key))
         if changed:
             sys.exit('{} differs from {} in {}'.format(args.config, settings_path, ', '.join(changed)))
     else:

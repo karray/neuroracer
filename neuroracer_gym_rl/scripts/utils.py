@@ -81,10 +81,9 @@ class ReplayDataset(Dataset):
         rows = np.arange(n - buffer.n_frames, n + 1)
         # Stacks repeat an episode's first frame rather than reach into the previous episode.
         rows = np.maximum(rows, rows[buffer.first[rows % maxlen]].max(initial=rows[0]))
-        frames = buffer.frames[rows % maxlen]
+        # The state and the next state share all but one image, so each image travels once.
         item = {'actions': torch.tensor(buffer.actions[n % maxlen]),
-                'states': torch.from_numpy(frames[:-1]),
-                'next_states': torch.from_numpy(frames[1:]),
+                'frames': torch.from_numpy(buffer.frames[rows % maxlen]),
                 'rewards': torch.tensor(buffer.rewards[n % maxlen]),
                 'terminates': torch.tensor(buffer.terminates[n % maxlen])}
         # Row r is overwritten while row r + maxlen is written.
@@ -124,7 +123,9 @@ def loader(buffer, batch_size):
 
 
 def to_device(batch, device):
-    return {key: value.to(device, non_blocking=True) for key, value in batch.items()}
+    batch = {key: value.to(device, non_blocking=True) for key, value in batch.items()}
+    frames = batch.pop('frames')
+    return {**batch, 'states': frames[:, :-1], 'next_states': frames[:, 1:]}
 
 
 def convnet(state_size, outputs):

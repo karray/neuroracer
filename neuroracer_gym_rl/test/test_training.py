@@ -12,7 +12,7 @@ import gymnasium as gym
 import dqn
 import training
 import utils
-from utils import ReplayBuffer, ReplayDataset, ReplaySampler, loader, preprocess, load_checkpoint
+from utils import ReplayBuffer, ReplayDataset, ReplaySampler, collate, loader, preprocess, load_checkpoint, to_device
 from neuroracer_discrete import Learner, NeuroRacer
 
 AGENTS = ('dqn', 'ddpg')
@@ -49,9 +49,10 @@ def test_buffer_rebuilds_frame_stacks_and_skips_overwritten_rows(tmp_path):
         if item is None:
             continue
         states, next_states, action, terminate = expected[n]
-        assert item['states'].shape == (3, 2, 2)
-        assert item['states'][:, 0, 0].tolist() == states
-        assert item['next_states'][:, 0, 0].tolist() == next_states
+        batch = to_device(collate([item]), 'cpu')
+        assert batch['states'].shape == (1, 3, 2, 2)
+        assert batch['states'][0, :, 0, 0].tolist() == states
+        assert batch['next_states'][0, :, 0, 0].tolist() == next_states
         assert (item['actions'].item(), item['rewards'].item(), item['terminates'].item()) == (action, n, terminate)
         seen.add(n)
     # Transitions whose earlier frames were overwritten are never returned or sampled.
@@ -160,30 +161,34 @@ class CameraEnv(gym.Env):
 
 gym.register('CameraEnv-v0', entry_point=CameraEnv)
 
-small_dqn = partial(dqn.Agent, buffer_max_size=100, batch_size=4)
+small_dqn = partial(dqn.Agent, buffer_max_size=1000, batch_size=40)
 
 
-def test_run_saves_progress_and_resumes_to_the_total_steps(tmp_path):
-    settings = dict(env_id='CameraEnv-v0', n_frames=2, sample_batch_size=10)
-    game = NeuroRacer(small_dqn, str(tmp_path), n_steps=20, **settings)
+def test_run_trains_for_its_epochs_and_resumes_to_the_total(tmp_path):
+    # An epoch of small_dqn is 1000 / 40 = 25 updates.
+    settings = dict(env_id='CameraEnv-v0', n_frames=2, sample_batch_size=10, warmup_steps=40)
+    game = NeuroRacer(small_dqn, str(tmp_path), n_epochs=1, **settings)
     game.run()
-    assert game.agent.progress['steps'] == 20 and game.agent.progress['episodes'] == 4
     assert game.env.unwrapped.closed
+    checkpoint = load_checkpoint(game.agent.weight_backup)
+    steps = checkpoint['progress']['steps']
+    assert checkpoint['progress']['updates'] == 25 and steps >= 40
     episodes = [json.loads(line) for line in open(tmp_path / 'episodes.jsonl')]
-    assert [e['steps'] for e in episodes] == [5] * 4 and all(e['crashed'] for e in episodes)
+    assert sum(e['steps'] for e in episodes) == steps and checkpoint['progress']['episodes'] == len(episodes)
 
-    game = NeuroRacer(small_dqn, str(tmp_path), n_steps=30, **settings)
-    assert game.agent.progress['steps'] == 20
-    assert game.agent.buffer.count[0] == 24  # 4 episodes of 5 transitions and a first frame
+    game = NeuroRacer(small_dqn, str(tmp_path), n_epochs=3, **settings)
+    assert game.agent.progress['steps'] == steps
+    assert game.agent.buffer.count[0] == steps + len(episodes)  # and a first frame per episode
     game.run()
-    assert game.agent.progress['steps'] == 30 and game.agent.buffer.count[0] == 36
+    checkpoint = load_checkpoint(game.agent.weight_backup)
+    assert checkpoint['progress']['updates'] == 75 and checkpoint['progress']['steps'] > steps
 
 
 def test_learner_trains_the_shared_agent_without_waiting(tmp_path):
     agent = make_agent('dqn', tmp_path)
     fill_buffer('dqn', agent.buffer)
     ema_before = [parameter.clone() for parameter in agent.target_model.module.parameters()]
-    learner = Learner(agent, warmup_steps=7, metrics_path=str(tmp_path / 'updates.jsonl'))
+    learner = Learner(agent, n_updates=10 ** 9, warmup_steps=7, metrics_path=str(tmp_path / 'updates.jsonl'))
     learner.start()
     time.sleep(15)
     learner.stop({'steps': 24, 'episodes': 3})
@@ -210,18 +215,18 @@ def test_a_config_starts_one_run_that_resumes_only_with_the_same_settings(tmp_pa
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(NeuroRacer, 'run', lambda self: None)
     agent = '[agent]\nclass = "dqn.Agent"\nbuffer_max_size = 100\n'
-    config = write_config(tmp_path, agent + '[training]\nenv_id = "CameraEnv-v0"\nn_steps = 100\n')
+    config = write_config(tmp_path, agent + '[training]\nenv_id = "CameraEnv-v0"\nn_epochs = 100\n')
     training.main(['training.py', config])
     settings = json.load(open('runs/small/config.json'))
     assert settings['agent.class'] == 'dqn.Agent' and settings['agent.gamma'] == 0.99
-    assert settings['training.n_steps'] == 100 and settings['training.max_episode_steps'] == 10000
+    assert settings['training.n_epochs'] == 100 and settings['training.max_episode_steps'] == 10000
 
     with pytest.raises(SystemExit, match='exists'):
         training.main(['training.py', config])
-    write_config(tmp_path, agent + '[training]\nenv_id = "CameraEnv-v0"\nn_steps = 200\n')
+    write_config(tmp_path, agent + '[training]\nenv_id = "CameraEnv-v0"\nn_epochs = 200\n')
     training.main(['training.py', config, '--resume'])
-    assert json.load(open('runs/small/config.json'))['training.n_steps'] == 200
-    write_config(tmp_path, agent + 'gamma = 0.9\n[training]\nenv_id = "CameraEnv-v0"\nn_steps = 200\n')
+    assert json.load(open('runs/small/config.json'))['training.n_epochs'] == 200
+    write_config(tmp_path, agent + 'gamma = 0.9\n[training]\nenv_id = "CameraEnv-v0"\nn_epochs = 200\n')
     with pytest.raises(SystemExit, match='agent.gamma'):
         training.main(['training.py', config, '--resume'])
     write_config(tmp_path, agent + 'gama = 0.9\n')

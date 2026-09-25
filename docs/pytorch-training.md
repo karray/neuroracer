@@ -13,7 +13,7 @@ An experiment is a TOML file in `experiments/`:
   arguments, e.g. `gamma`, `learning_rate`, `batch_size`, `ema_decay`, the
   exploration schedule and `buffer_max_size` of `dqn.Agent`.
 - `[training]` overrides defaults of `NeuroRacer`'s keyword arguments: the task
-  `env_id`, `n_steps` in total (4,000,000), `max_episode_steps` (10,000),
+  `env_id`, `n_epochs` in total (250), `max_episode_steps` (10,000),
   `n_frames`, `warmup_steps` and the save interval `sample_batch_size`.
 - `seed` seeds Python, NumPy and PyTorch.
 
@@ -23,7 +23,7 @@ registered with gymnasium; a config then names it.
 The run folder `runs/<config name>/` holds `config.json` with every value used,
 the checkpoint, `episodes.jsonl`, `updates.jsonl` and the replay buffer. A new run
 refuses an existing folder. `--resume` continues a run when the config differs
-only in `n_steps`, with its replay buffer. Ctrl-C stops training and saves the
+only in `n_epochs`, with its replay buffer. Ctrl-C stops training and saves the
 model. `ddpg.py` or `ddpg_learning.launch` trains `experiments/ddpg.toml` (DDPG on
 `NeuroRacer-v1`). Evaluation is in `q_learning.ipynb` (`./scripts/dev notebook`).
 
@@ -48,9 +48,12 @@ Training runs in two processes that share the agent:
   uniformly random batches that four `DataLoader` worker processes read from
   the buffer. Once per epoch, as many updates as a full buffer has batches
   (1,000,000 / 256 ≈ 3,900 for DQN), it moves the EMA, which is also the target
-  network, towards the network. Every 1,000 collected steps and when training
-  ends it saves the checkpoint and appends to `updates.jsonl`: the number of
-  updates, mean loss and Q-value, and dropped transitions.
+  network, towards the network. Training ends after `n_epochs` epochs, so every
+  config learns from the same number of sampled transitions (an epoch is
+  `buffer_max_size` of them, whatever the batch size); the car collects until
+  then. Every 1,000 collected steps and when training ends it saves the
+  checkpoint and appends to `updates.jsonl`: the number of updates, mean loss
+  and Q-value, and dropped transitions.
 
 They share:
 
@@ -66,8 +69,10 @@ They share:
 Side effects:
 
 - Neither process waits for the other, so the number of updates per collected
-  step depends on the hardware: on an RTX 3060 Ti about 3 (81 updates/s at 25
-  steps/s). `updates.jsonl` records it.
+  step, and with it the steps a run collects, depends on the hardware and the
+  config: on an RTX 3060 Ti about 2.5 for one frame (81 updates/s at about 30
+  steps/s), about 1.1 for 16 frames (reading the frame stacks limits the
+  learner to about 34 updates/s). `updates.jsonl` records it.
 - The car drives with the EMA of the latest epoch, and a run is not
   reproducible from `seed`.
 - Ctrl-C stops the car's process, which lets the learner finish its update and
@@ -84,8 +89,10 @@ epoch, DDPG's (0.999 over 62,500 updates) practically the whole way.
 
 The networks start with four 3×3 convolutions with stride 2 (32, 64, 64 and 128
 channels) on 56×128 grayscale images: the camera image without its top 200
-rows, scaled by 0.2. DQN explores with ε falling linearly from 1.0 to 0.01 over
-50,000 steps, DDPG with Ornstein-Uhlenbeck noise.
+rows, scaled by 0.2. `n_frames` stacks the last camera images as input channels
+(`experiments/dqn-16f.toml`: 16, so the network sees motion; an episode's first
+image repeats until there are enough). DQN explores with ε falling linearly
+from 1.0 to 0.01 over 50,000 steps, DDPG with Ornstein-Uhlenbeck noise.
 
 ## GPU
 

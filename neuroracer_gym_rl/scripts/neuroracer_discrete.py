@@ -33,13 +33,16 @@ class Telemetry():
 
 class Learner(context.Process):
     """Trains the agent in its own process. The agent's tensors are shared with the car's process,
-    which drives with the EMA network; checkpoints are saved with the car's progress."""
-    def __init__(self, agent, warmup_steps, metrics_path):
+    which drives with the EMA network; checkpoints are saved with the car's progress.
+    Training ends after `n_updates` updates in total."""
+    def __init__(self, agent, n_updates, warmup_steps, metrics_path):
         super(Learner, self).__init__(name='learner')
         self.agent = agent
+        self.n_updates = n_updates
         self.warmup_steps = max(warmup_steps, agent.batch_size)
         self.metrics_path = metrics_path
         self.progress = context.Array('q', 2)
+        self.updates = context.Value('q', agent.progress['updates'], lock=False)
         self.saving = context.Event()
         self.stopping = context.Event()
 
@@ -53,9 +56,10 @@ class Learner(context.Process):
         if not self.stopping.is_set():
             published = time.monotonic(), agent.progress['updates']
             for batch in loader(buffer, agent.batch_size):
-                if self.stopping.is_set():
+                if self.stopping.is_set() or agent.progress['updates'] >= self.n_updates:
                     break
                 agent.replay(batch)
+                self.updates.value = agent.progress['updates']
                 self.recent.append((agent.loss, agent.q, agent.batch_size - len(batch['rewards'])))
                 if time.monotonic() - published[0] >= 1:
                     updates = agent.progress['updates']
@@ -65,6 +69,7 @@ class Learner(context.Process):
                     published = time.monotonic(), updates
                 if self.saving.is_set():
                     self._save()
+        self.stopping.wait()  # for the car's final progress
         self._save()
         telemetry.close()
         del self.agent  # Releases the GPU memory shared with the car's process, which owns it.
@@ -93,10 +98,10 @@ class Learner(context.Process):
 
 
 class NeuroRacer:
-    def __init__(self, agent_class, working_dir, env_id='NeuroRacer-v0', n_steps=4000000, max_episode_steps=10000,
+    def __init__(self, agent_class, working_dir, env_id='NeuroRacer-v0', n_epochs=250, max_episode_steps=10000,
                  n_frames=1, sample_batch_size=1000, warmup_steps=1000):
         self.sample_batch_size = sample_batch_size
-        self.n_steps           = n_steps
+        self.n_epochs          = n_epochs
         self.warmup_steps      = warmup_steps
         self.env               = gym.make(env_id, max_episode_steps=max_episode_steps)
 
@@ -132,14 +137,15 @@ class NeuroRacer:
         total_time = time.time()
         steps = 0
         progress = self.agent.progress
-        learner = Learner(self.agent, self.warmup_steps, os.path.join(self.working_dir, 'updates.jsonl'))
+        # Training lasts a number of epochs, so every run learns from the same amount of sampled
+        # data, however many steps the car collects meanwhile.
+        n_updates = self.n_epochs * self.agent.updates_per_epoch
+        learner = Learner(self.agent, n_updates, self.warmup_steps, os.path.join(self.working_dir, 'updates.jsonl'))
         telemetry = Telemetry('/telemetry/car')
 
         try:
             learner.start()
-            do_training = progress['steps'] < self.n_steps
-
-            while do_training:
+            while learner.updates.value < n_updates:
                 episode_time = time.time()
 
                 state, info = self.env.reset()
@@ -163,7 +169,7 @@ class NeuroRacer:
                     action = self.agent.act(np.expand_dims(np.stack(stacked_states, axis=0), axis=0))
 
                     next_state, reward, terminated, truncated, _ = self.env.step(action)
-                    done = terminated or truncated
+                    done = terminated or truncated or learner.updates.value >= n_updates
                     next_state = preprocess(next_state, self.img_y_offset, self.img_x_scale, self.img_y_scale)
 
                     self.agent.buffer.append(action, next_state, reward, terminated)
@@ -178,8 +184,6 @@ class NeuroRacer:
 
                     if progress['steps'] % self.sample_batch_size == 0:
                         learner.save(progress)
-                        if progress['steps'] >= self.n_steps:
-                            do_training = False
 
 
                 progress['episodes'] += 1
