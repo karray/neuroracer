@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from functools import partial
+import math
 import os
 import shutil
 
@@ -14,15 +15,12 @@ from timm.utils import ModelEmaV3
 
 loginfo = partial(print, flush=True)
 context = mp.get_context('spawn')
-# Samples per forward and backward pass; a whole batch of 256 needs about 7 GB of GPU memory.
-micro_batch_size = 64
 # Processes that read replay batches from disk.
 loader_workers = 4
 
 
-def preprocess(img, y_offset, size, interpolation=cv2.INTER_AREA):
-    img = cv2.resize(img[y_offset:,:], (size, size), interpolation=interpolation)
-    return np.ascontiguousarray(img[:, :, ::-1].transpose(2, 0, 1))
+def preprocess(img, y_offset, x_scale, y_scale, interpolation=cv2.INTER_AREA):
+    return cv2.resize(cv2.cvtColor(img[y_offset:,:], cv2.COLOR_BGR2GRAY), None, fx=x_scale, fy=y_scale, interpolation=interpolation)
 
 
 class ReplayBuffer():
@@ -37,7 +35,7 @@ class ReplayBuffer():
 
         def array(name, shape, dtype):
             return np.lib.format.open_memmap(os.path.join(path, name + '.npy'), mode='w+', dtype=dtype, shape=shape)
-        self.frames = array('frames', (maxlen, 3) + state_shape[:2], np.uint8)
+        self.frames = array('frames', (maxlen,) + state_shape[:2], np.uint8)
         self.first = array('first', (maxlen,), np.bool_)
         self.actions = array('actions', (maxlen,) + action_shape, action_dtype)
         self.rewards = array('rewards', (maxlen,), np.float32)
@@ -86,8 +84,8 @@ class ReplayDataset(Dataset):
         rows = np.maximum(rows, rows[buffer.first[rows % maxlen]].max(initial=rows[0]))
         frames = buffer.frames[rows % maxlen]
         item = {'actions': torch.tensor(buffer.actions[n % maxlen]),
-                'states': torch.from_numpy(frames[:-1]).flatten(0, 1),
-                'next_states': torch.from_numpy(frames[1:]).flatten(0, 1),
+                'states': torch.from_numpy(frames[:-1]),
+                'next_states': torch.from_numpy(frames[1:]),
                 'rewards': torch.tensor(buffer.rewards[n % maxlen]),
                 'terminates': torch.tensor(buffer.terminates[n % maxlen])}
         # Row r is overwritten while row r + maxlen is written.
@@ -130,6 +128,18 @@ def to_device(batch, device):
     return {key: value.to(device, non_blocking=True) for key, value in batch.items()}
 
 
+def convnet(state_size, outputs):
+    height, width, frames = state_size
+    return nn.Sequential(
+        nn.Conv2d(frames, 32, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Conv2d(64, 64, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Flatten(),
+        nn.Linear(128 * math.ceil(height / 16) * math.ceil(width / 16), outputs),
+    )
+
+
 class Normalize(nn.Module):
     def forward(self, states):
         return states.float() / 255.0
@@ -142,17 +152,12 @@ def autocast(device):
 def fit(model, batch, loss, ema=None):
     model.train()
     model.optimizer.zero_grad()
-    size = len(batch['rewards'])
-    total = 0.0
-    for start in range(0, size, micro_batch_size):
-        part = {key: value[start:start + micro_batch_size] for key, value in batch.items()}
-        part_loss = loss(part) / size
-        part_loss.backward()
-        total += part_loss.detach()
+    batch_loss = loss(batch)
+    batch_loss.backward()
     model.optimizer.step()
     if ema is not None:
         ema.update(model)
-    return float(total)
+    return float(batch_loss.detach())
 
 
 def synchronize(device):

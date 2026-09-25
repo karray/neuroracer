@@ -15,18 +15,18 @@ from neuroracer_discrete import Learner, NeuroRacer
 AGENTS = ('dqn', 'ddpg')
 
 
-def test_preprocess_crops_resizes_and_converts_bgr_to_rgb():
+def test_preprocess_crops_scales_and_converts_to_grayscale():
     image = np.zeros((480, 640, 3), dtype=np.uint8)
     image[:200] = 255  # cropped away
-    image[200:, :, 0] = 50  # blue in BGR
-    frame = preprocess(image, 200, 224)
-    assert frame.shape == (3, 224, 224) and frame.dtype == np.uint8
-    assert (frame[2] == 50).all() and frame[:2].max() == 0
+    image[200:, :, 0] = 100  # blue in BGR
+    frame = preprocess(image, 200, 0.2, 0.2)
+    assert frame.shape == (56, 128) and frame.dtype == np.uint8
+    assert (frame == 11).all()  # 0.114 * 100
 
 
 def test_buffer_rebuilds_frame_stacks_and_skips_overwritten_rows(tmp_path):
     buffer = ReplayBuffer((2, 2, 3), 12, str(tmp_path / 'buffer'))
-    frame = lambda value: np.full((3, 2, 2), value, np.uint8)
+    frame = lambda value: np.full((2, 2), value, np.uint8)
     expected, value = {}, 0
     for length in (2, 5, 1, 6):  # 18 rows wrap the 12-row buffer; row n holds value n.
         state = [value] * 3
@@ -46,9 +46,9 @@ def test_buffer_rebuilds_frame_stacks_and_skips_overwritten_rows(tmp_path):
         if item is None:
             continue
         states, next_states, action, terminate = expected[n]
-        assert item['states'].shape == (9, 2, 2)
-        assert item['states'][::3, 0, 0].tolist() == states
-        assert item['next_states'][::3, 0, 0].tolist() == next_states
+        assert item['states'].shape == (3, 2, 2)
+        assert item['states'][:, 0, 0].tolist() == states
+        assert item['next_states'][:, 0, 0].tolist() == next_states
         assert (item['actions'].item(), item['rewards'].item(), item['terminates'].item()) == (action, n, terminate)
         seen.add(n)
     # Transitions whose earlier frames were overwritten are never returned or sampled.
@@ -69,10 +69,10 @@ def make_agent(name, working_dir):
 def fill_buffer(name, buffer):
     rng = np.random.default_rng(0)
     for episode in range(3):
-        buffer.start_episode(rng.integers(0, 256, (3, 64, 64), dtype=np.uint8))
+        buffer.start_episode(rng.integers(0, 256, (64, 64), dtype=np.uint8))
         for step in range(8):
             action = np.float32([rng.uniform(-1, 1)]) if name == 'ddpg' else int(rng.integers(3))
-            buffer.append(action, rng.integers(0, 256, (3, 64, 64), dtype=np.uint8), 1.0, step == 7)
+            buffer.append(action, rng.integers(0, 256, (64, 64), dtype=np.uint8), 1.0, step == 7)
 
 
 @pytest.mark.parametrize('name', AGENTS)
@@ -91,7 +91,7 @@ def test_replay_trains_saves_and_resumes(name, tmp_path, monkeypatch):
     ema_after = list(ema.module.parameters())
     assert any(not torch.equal(old, new) for old, new in zip(ema_before, ema_after))
     assert any(not torch.equal(a, b) for a, b in zip(ema_after, model.parameters()))
-    action = agent.act(rng.integers(0, 256, (1, 6, 64, 64), dtype=np.uint8))
+    action = agent.act(rng.integers(0, 256, (1, 2, 64, 64), dtype=np.uint8))
     if name == 'ddpg':
         assert action.shape == (1,) and action.dtype == np.float32 and abs(action[0]) <= 1
     else:
@@ -120,7 +120,7 @@ def test_exploration_decays_linearly_with_collected_steps(tmp_path):
 
 def test_mirrored_transitions_swap_left_and_right(tmp_path):
     agent = make_agent('dqn', tmp_path)
-    states = torch.arange(2 * 6 * 64 * 64).reshape(2, 6, 64, 64)
+    states = torch.arange(2 * 2 * 64 * 64).reshape(2, 2, 64, 64)
     batch = {'actions': torch.tensor([0, 2]), 'states': states, 'next_states': states + 1}
     flipped = agent.flip(batch, torch.tensor([True, False]))
     assert flipped['actions'].tolist() == [2, 2]

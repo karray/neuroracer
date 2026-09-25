@@ -5,10 +5,8 @@ import numpy as np
 
 import torch
 from torch import nn
-import timm
-from timm.layers import GroupNorm
 
-from utils import ReplayBuffer, Normalize, autocast, fit, to_device, EMA, save_checkpoint, load_checkpoint, loginfo
+from utils import ReplayBuffer, convnet, Normalize, autocast, fit, to_device, EMA, save_checkpoint, load_checkpoint, loginfo
 
 class Agent():
     def __init__(self, state_size, action_size, buffer_max_size, add_flipped, working_dir='.'):
@@ -25,7 +23,7 @@ class Agent():
         self.buffer             = ReplayBuffer(state_size, buffer_max_size, os.path.join(self.working_dir, 'buffer'))
         self.batch_size         = 256
         self.learning_rate      = 0.0001
-        self.gamma              = 0.9
+        self.gamma              = 0.99
         self.exploration_start  = 1.0
         self.exploration_min    = 0.01
         self.exploration_steps  = 50000
@@ -39,12 +37,10 @@ class Agent():
 
 
     def _build_model(self):
-        frames = self.state_size[2]
-
         model = nn.Sequential(
             Normalize(),
-            timm.create_model('resnet18', pretrained=False, in_chans=3 * frames, num_classes=self.action_size,
-                              norm_layer=GroupNorm),
+            convnet(self.state_size, 512), nn.ReLU(),
+            nn.Linear(512, self.action_size),
         ).to(self.device)
 
         model.optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate)
@@ -93,7 +89,7 @@ class Agent():
 
         with autocast(self.device):
             values = self.model(states).float().gather(1, actions[:, None]).squeeze(1)
-        return nn.functional.huber_loss(values, targets, reduction='sum')
+        return nn.functional.huber_loss(values, targets)
 
     def replay(self, batch):
         batch = to_device(batch, self.device)

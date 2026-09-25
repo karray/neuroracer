@@ -7,10 +7,8 @@ import numpy as np
 
 import torch
 from torch import nn
-import timm
-from timm.layers import GroupNorm
 
-from utils import ReplayBuffer, Normalize, EMA, autocast, to_device, save_checkpoint, load_checkpoint, loginfo
+from utils import ReplayBuffer, convnet, Normalize, EMA, autocast, to_device, save_checkpoint, load_checkpoint, loginfo
 
 env_id = 'NeuroRacer-v1'
 
@@ -27,15 +25,10 @@ class OrnsteinUhlenbeckProcess:
         return x
 
 
-def resnet18(frames, outputs):
-    return timm.create_model('resnet18', pretrained=False, in_chans=3 * frames, num_classes=outputs, norm_layer=GroupNorm)
-
-
 class Critic(nn.Module):
     def __init__(self, state_size, nb_actions):
         super(Critic, self).__init__()
-        frames = state_size[2]
-        self.observation = nn.Sequential(Normalize(), resnet18(frames, 200), nn.ReLU())
+        self.observation = nn.Sequential(Normalize(), convnet(state_size, 200), nn.ReLU())
         self.value = nn.Sequential(nn.Linear(200 + nb_actions, 200), nn.ReLU(), nn.Linear(200, 1))
         nn.init.uniform_(self.value[-1].weight, -3e-4, 3e-4)
         nn.init.zeros_(self.value[-1].bias)
@@ -85,9 +78,9 @@ class Agent:
 
 
     def _create_actor(self):
-        backbone = resnet18(self.state_size[2], self.nb_actions)
-        nn.init.uniform_(backbone.fc.weight, -3e-4, 3e-4)
-        nn.init.zeros_(backbone.fc.bias)
+        backbone = convnet(self.state_size, self.nb_actions)
+        nn.init.uniform_(backbone[-1].weight, -3e-4, 3e-4)
+        nn.init.zeros_(backbone[-1].bias)
         model = nn.Sequential(Normalize(), backbone, nn.Tanh())
 
         loginfo(model)

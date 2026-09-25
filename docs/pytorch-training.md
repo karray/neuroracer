@@ -39,7 +39,7 @@ Training runs in two processes that share the agent:
 They share:
 
 - The replay buffer: memory-mapped files in `<output>/buffer/` (1,000,000
-  transitions, up to 150 GB), deleted when training ends. The car writes and the
+  transitions, about 7 GB), deleted when training ends. The car writes and the
   workers read. A transition that was overwritten while it was read is dropped
   from its batch.
 - The agent's tensors, through CUDA IPC. The learner updates them in place and a
@@ -61,16 +61,13 @@ Side effects:
 
 | Agent | Network | EMA decay | Batch | Loss |
 | --- | --- | --- | --- | --- |
-| dqn | resnet18 → 3 Q-values | 0.995 | 256 | Huber, Double DQN, γ 0.9 |
-| ddpg | resnet18 actor and critic | 0.999 | 16 | MSE, γ 0.9 |
+| dqn | convolutions → 512 → 3 Q-values | 0.995 | 256 | Huber, Double DQN, γ 0.99 |
+| ddpg | convolutions → actor and critic | 0.999 | 16 | MSE, γ 0.9 |
 
-The networks are timm `resnet18` with GroupNorm, trained from scratch on 224×224
-RGB images (the camera image without its top 200 rows), 3 channels per frame.
-DQN explores with ε falling linearly from 1.0 to 0.01 over 50,000 steps, DDPG
-with Ornstein-Uhlenbeck noise. A batch is trained in micro-batches of 64 samples
-with accumulated gradients, the same update as one pass because GroupNorm
-normalizes each sample on its own. The learner then needs about 2.4 GB of GPU
-memory, where a whole batch of 256 needs about 7 GB.
+The networks start with four 3×3 convolutions with stride 2 (32, 64, 64 and 128
+channels) on 56×128 grayscale images: the camera image without its top 200
+rows, scaled by 0.2. DQN explores with ε falling linearly from 1.0 to 0.01 over
+50,000 steps, DDPG with Ornstein-Uhlenbeck noise.
 
 ## GPU
 
