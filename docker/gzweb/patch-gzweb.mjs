@@ -13,8 +13,6 @@ function patch(file, replacements) {
 
 patch('node_modules/gzweb/src/SceneManager.ts', [
   ['this.scene.scene.renderer', 'this.scene.renderer'],
-  ['"ignition.msgs.WorldControl"', '"gz.msgs.WorldControl"'],
-  ['"ignition.msgs.ServerControl"', '"gz.msgs.ServerControl"'],
   ['public disconnect(): void {', `public disconnect(): void {
     cancelAnimationFrame(this.cancelAnimation);
     this.previousRenderTimestampMs = 0;
@@ -25,9 +23,6 @@ patch('node_modules/gzweb/src/SceneManager.ts', [
   ['      shaders: new Shaders(),', `      shaders: new Shaders(),
       defaultCameraPosition: new THREE.Vector3(2, 0.5, 2),
       defaultCameraLookAt: new THREE.Vector3(2, 3.7, 0.15),`],
-  // Jetty 10.5's text framing drops empty payloads and truncates NUL bytes.
-  // A nonempty header produces a valid default pause:false request without NUL.
-  ['{ pause: false },', '{ pause: false, header: {data: [{key: "gzweb"}]} },'],
 ]);
 patch('node_modules/gzweb/src/Scene.ts', [
   ['import * as JSZip from "jszip";', 'import JSZip from "jszip";'],

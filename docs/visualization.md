@@ -9,8 +9,14 @@
 Stop `web`/`sim` with Ctrl-C before switching modes. Both ports bind to host
 loopback only.
 
-GzWeb follows the car (**Follow car**, **Overview**) and shows its camera image
-in the corner (**Camera**). Leave Play/Pause alone while training.
+GzWeb only shows the simulation: it follows the car (**Follow car**,
+**Overview**), shows its camera image in the corner (**Camera**) and what the
+training processes publish (**Telemetry**: the run, `train` or `drive`, and the
+car's and the learner's progress). The world stays paused except while
+`./scripts/dev train` or `drive` steps it. Clicking a telemetry field switches
+it between its value and a graph of its last 300 values (reward, action, loss,
+Q and updates/s start as graphs); a section disappears 5 s after its process
+stops publishing.
 
 ## Maintenance
 
