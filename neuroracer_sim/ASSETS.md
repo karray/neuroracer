@@ -11,6 +11,6 @@ drive use Gazebo Sim's native sensors and Ackermann steering system (steering
 limited to 1 rad, speed to 5 m/s).
 
 Gazebo Sim cannot read Gazebo Classic material scripts, so they are reproduced
-inline: `Gazebo/Grey` as its colors, and `Gazebo/CeilingTiled` as a PBR albedo map
-of `ceiling_tiled.jpg`, copied from
+inline: `Gazebo/Grey` as its colors, and `Gazebo/CeilingTiled` as a matte,
+non-metallic PBR albedo map of `ceiling_tiled.jpg`, copied from
 https://github.com/gazebosim/gazebo-classic (`media/materials/textures`, Apache-2.0).

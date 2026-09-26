@@ -24,6 +24,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -52,6 +54,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -80,6 +84,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -108,6 +114,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -136,6 +144,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -188,6 +198,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -240,6 +252,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -268,6 +282,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -296,6 +312,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -348,6 +366,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -376,6 +396,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -404,6 +426,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -432,6 +456,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -484,6 +510,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -512,6 +540,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -540,6 +570,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -568,6 +600,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -596,6 +630,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -624,6 +660,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -652,6 +690,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -680,6 +720,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -708,6 +750,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -736,6 +780,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -788,6 +834,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -816,6 +864,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -844,6 +894,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -896,6 +948,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -924,6 +978,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
@@ -952,6 +1008,8 @@
           <pbr>
             <metal>
               <albedo_map>materials/textures/ceiling_tiled.jpg</albedo_map>
+              <metalness>0</metalness>
+              <roughness>1</roughness>
             </metal>
           </pbr>
         </material>
