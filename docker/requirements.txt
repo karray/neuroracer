@@ -1,9 +1,2 @@
-numpy
-scipy
-matplotlib
-scikit-learn
-opencv-python
-keras
+gymnasium==1.3.0
 jupyterlab
-gym==0.10.9
-tensorflow-gpu==1.13.1

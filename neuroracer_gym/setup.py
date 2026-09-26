@@ -1,12 +1,12 @@
-## ! DO NOT MANUALLY INVOKE THIS setup.py, USE CATKIN INSTEAD
+from setuptools import setup
 
-from distutils.core import setup
-from catkin_pkg.python_setup import generate_distutils_setup
-
-# fetch values from package.xml
-setup_args = generate_distutils_setup(
-    packages=['neuroracer_gym'],
+setup(
+    name='neuroracer_gym',
+    version='0.0.0',
+    packages=['neuroracer_gym', 'neuroracer_gym.tasks'],
     package_dir={'': 'src'},
+    data_files=[('share/ament_index/resource_index/packages', ['resource/neuroracer_gym']),
+                ('share/neuroracer_gym', ['package.xml'])],
+    install_requires=['setuptools', 'gymnasium>=1.3,<2', 'numpy'],
+    zip_safe=True,
 )
-
-setup(**setup_args)

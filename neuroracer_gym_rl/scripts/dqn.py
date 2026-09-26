@@ -1,160 +1,108 @@
 import os
 import random
-import time
 
 import numpy as np
 
-import keras
-from keras.models import Sequential,Input,Model
-from keras.layers import Dense, Dropout, Flatten
-from keras.layers import Conv2D, MaxPooling2D
-# from keras.layers.normalization import BatchNormalization
-from keras.layers.advanced_activations import LeakyReLU
-from keras.optimizers import Adam
+import torch
+from torch import nn
 
-# ROS packages required
-import rospy
-import rospkg
-
-from utils import Memory, H5Buffer
+from utils import ReplayBuffer, convnet, Normalize, autocast, fit, to_device, EMA, save_checkpoint, load_checkpoint, loginfo
 
 class Agent():
-    def __init__(self, state_size, action_size, buffer_max_size, chunk_size, add_flipped, always_explore=False):
+    def __init__(self, state_size, action_size, buffer_max_size=1000000, add_flipped=False, working_dir='.',
+                 batch_size=256, learning_rate=0.0001, gamma=0.99, exploration_start=1.0, exploration_min=0.01,
+                 exploration_steps=50000, ema_decay=0.9998):
         file_name = 'dqn'+'_'+str(state_size[2])+'f'
         if add_flipped:
             file_name+='_flip'
-        rospack = rospkg.RosPack()
-        
-        self.chunk_size = chunk_size
+
         self.add_flipped = add_flipped
-        self.always_explore = always_explore
-        self.working_dir = rospack.get_path('neuroracer_gym_rl')
-        self.weight_backup      = os.path.join(self.working_dir, file_name+'.h5')
+        self.working_dir = working_dir
+        self.weight_backup      = os.path.join(self.working_dir, file_name+'.pt')
 
         self.state_size         = state_size
         self.action_size        = action_size
-        self.buffer             = H5Buffer(state_size, buffer_max_size)
-        self.learning_rate      = 0.001
-        self.gamma              = 0.9
-        self.exploration_rate   = 0.85
-        self.exploration_min    = 0.01
-        self.exploration_decay  = 0.99
+        self.buffer             = ReplayBuffer(state_size, buffer_max_size, os.path.join(self.working_dir, 'buffer'))
+        self.batch_size         = batch_size
+        self.learning_rate      = learning_rate
+        self.gamma              = gamma
+        self.exploration_start  = exploration_start
+        self.exploration_min    = exploration_min
+        self.exploration_steps  = exploration_steps
+        self.ema_decay          = ema_decay
+        self.device             = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.progress           = {'steps': 0, 'episodes': 0, 'updates': 0}
+        self.loss               = None
+        self.q                  = None
         self.model              = self._build_model()
+        # The target follows the model once per epoch, as many updates as a full buffer has
+        # batches, by the per-update decay compounded over the epoch.
+        self.updates_per_epoch  = buffer_max_size // batch_size
+        self.target_model       = EMA(self.model, self.ema_decay ** self.updates_per_epoch)
+        self._load_model()
 
 
     def _build_model(self):
+        model = nn.Sequential(
+            Normalize(),
+            convnet(self.state_size, 512), nn.ReLU(),
+            nn.Linear(512, self.action_size),
+        ).to(self.device)
 
-        model = Sequential()
-        model.add(Conv2D(16, kernel_size=(3, 3), strides=(1, 1), input_shape=self.state_size,padding='same'))
-        model.add(LeakyReLU(alpha=0.1))
-        model.add(MaxPooling2D((2, 2),padding='same'))
-        model.add(Dropout(0.25))
+        model.optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate)
+        loginfo(model)
 
-        model.add(Conv2D(32,kernel_size=(3, 3), strides=(1, 1),padding='same'))
-        model.add(LeakyReLU(alpha=0.1))
-        model.add(Dropout(0.25))
-
-        model.add(Conv2D(64, kernel_size=(3, 3), strides=(2, 2), padding='same'))
-        model.add(LeakyReLU(alpha=0.1))
-        model.add(Dropout(0.25))
-
-        model.add(Flatten())
-
-        model.add(Dense(256))
-        model.add(LeakyReLU(alpha=0.1))      
-        model.add(Dropout(0.25))
-
-        model.add(Dense(128))
-        model.add(LeakyReLU(alpha=0.1))      
-        model.add(Dropout(0.1))
-
-        model.add(Dense(self.action_size, activation='linear'))
-
-        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate), metrics=['accuracy'])
-        model.summary()
-        
-        if os.path.isfile(self.weight_backup):
-            model.load_weights(self.weight_backup)
-            if not self.always_explore:
-                self.exploration_rate = self.exploration_min
-            
         return model
 
-    # def to_grayscale(self, img):
-    #     return np.mean(img, axis=2).astype(np.uint8)
-
-    # def downsample(self, img):
-    #     return img[::2, ::2]
-    
-
+    def _load_model(self):
+        if os.path.isfile(self.weight_backup):
+            checkpoint = load_checkpoint(self.weight_backup)
+            self.model.load_state_dict(checkpoint['model'])
+            self.target_model.module.load_state_dict(checkpoint['target_model'])
+            self.model.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.progress = checkpoint['progress']
 
     def save_model(self):
-        rospy.loginfo("Model saved") 
-        self.model.save(self.weight_backup)
+        save_checkpoint(self.weight_backup, model=self.model.state_dict(), target_model=self.target_model.module.state_dict(),
+                        optimizer=self.model.optimizer.state_dict(), progress=dict(self.progress))
+        loginfo("Model saved")
 
-    def act(self, state):
-        if np.random.rand() <= self.exploration_rate:
+    @property
+    def exploration_rate(self):
+        fraction = min(self.progress['steps'] / self.exploration_steps, 1.0)
+        return self.exploration_start + fraction * (self.exploration_min - self.exploration_start)
+
+    def act(self, state, explore=True):
+        if explore and np.random.rand() <= self.exploration_rate:
             return random.randrange(self.action_size)
-        act_values = self.model.predict(state)
-        return np.argmax(act_values[0])
-        
-    def flip(self, actions, states, next_states, rewards, not_done):
-        actions_flipped = 2-actions
-        states_flipped = np.flip(states, axis=2)
-        next_states_flipped = np.flip(next_states, axis=2)
-        rewards_flipped = np.copy(rewards)
-        
-        next_pred_flipped = self.model.predict(next_states_flipped[not_done]).max(axis=1)
-        rewards_flipped[not_done]+= self.gamma * next_pred_flipped
-        targets_flipped = self.model.predict(states_flipped)
-        targets_flipped[np.arange(len(actions_flipped)), actions_flipped] = rewards_flipped
-        
-        return states_flipped, targets_flipped
+        act_values = self.target_model(torch.as_tensor(state, device=self.device))
+        return int(act_values[0].argmax())
 
-    def replay(self, new_data):
-        rospy.loginfo("Replaying..."), 
+    def flip(self, batch, mirrored):
+        flip = lambda images: torch.where(mirrored[:, None, None, None], images.flip(-1), images)
+        return {**batch, 'actions': torch.where(mirrored, 2-batch['actions'], batch['actions']),
+                'states': flip(batch['states']), 'next_states': flip(batch['next_states'])}
 
-        self.buffer.extend(new_data)
-        buffer_length = self.buffer.length()
-        
-        chunks = buffer_length / self.chunk_size
-        
-        chunk_n = 2
-        if chunks < 2:
-            chunk_n = 1
-            chunks=1
-        print('buffer length', buffer_length)
-        print('chunks', chunks)
-        
-        for i in np.random.choice(range(chunks), chunk_n, False):
-            print('fitting', i)
-            start_idx = i * self.chunk_size
-            end_idx = start_idx + self.chunk_size
-            
-            loading_time = time.time()
-            actions, states, next_states, rewards, terminates = self.buffer.sample(start_idx, end_idx)
-            print('loading {} samples time: {}'.format(self.chunk_size, time.time()-loading_time))
-            
-            not_done = np.invert(terminates)
-            rewards_new = np.copy(rewards)
+    def _loss(self, batch):
+        actions, states, next_states, rewards, terminates = \
+            batch['actions'].long(), batch['states'], batch['next_states'], batch['rewards'], batch['terminates']
 
-            tmp_pred = self.model.predict(next_states[not_done], batch_size=1000)
-                
-            next_pred = tmp_pred.max(axis=1)
-            rewards_new[not_done]+= self.gamma * next_pred
-            targets = self.model.predict(states)
-            targets[np.arange(len(actions)), actions] = rewards_new
+        with torch.no_grad(), autocast(self.device):
+            # Double DQN
+            next_actions = self.model(next_states).argmax(dim=1, keepdim=True)
+            next_pred = self.target_model.module(next_states).float().gather(1, next_actions).squeeze(1)
+        targets = rewards + self.gamma * next_pred * ~terminates
 
-            if self.add_flipped:
-                states_flipped, targets_flipped = self.flip(actions, states, next_states, rewards, not_done)
-                states = np.concatenate((states,states_flipped))
-                targets = np.concatenate((targets,targets_flipped))
-            fit_time = time.time()
-            self.model.fit(states, targets, shuffle=True, batch_size=1000, epochs=1, verbose=0)
-            print('fit time:', time.time()-fit_time)
-        
-        if self.exploration_rate > self.exploration_min:
-            self.exploration_rate *= self.exploration_decay
+        with autocast(self.device):
+            values = self.model(states).float().gather(1, actions[:, None]).squeeze(1)
+        self.q = float(values.detach().mean())
+        return nn.functional.huber_loss(values, targets)
 
-        self.save_model()
-        
+    def replay(self, batch):
+        batch = to_device(batch, self.device)
+        if self.add_flipped:
+            batch = self.flip(batch, torch.rand(len(batch['rewards']), device=self.device) < 0.5)
+        self.loss = fit(self.model, batch, self._loss)
+        self.progress['updates'] += 1
+        if self.progress['updates'] % self.updates_per_epoch == 0:
+            self.target_model.update(self.model)

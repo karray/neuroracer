@@ -1,128 +1,196 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-import cv2
-import h5py
-import numpy as np
-from sklearn.utils import shuffle
-from collections import deque
+import copy
+from functools import partial
+import math
 import os
 
-def preprocess(img, y_offset, x_scale, y_scale, interpolation=cv2.INTER_LINEAR):
-    return cv2.resize(cv2.cvtColor(img[y_offset:,:], cv2.COLOR_RGB2GRAY), None, fx=x_scale, fy=y_scale, interpolation=interpolation)/255.0
+import cv2
+import numpy as np
+import torch
+from torch import nn
+import torch.multiprocessing as mp
+from torch.utils.data import DataLoader, Dataset, Sampler, default_collate
+
+loginfo = partial(print, flush=True)
+context = mp.get_context('spawn')
+# Processes that read replay batches from disk.
+loader_workers = 4
 
 
-class H5Buffer():
-    def __init__(self, state_shape, maxlen):
+def preprocess(img, y_offset, x_scale, y_scale, interpolation=cv2.INTER_AREA):
+    return cv2.resize(cv2.cvtColor(img[y_offset:,:], cv2.COLOR_BGR2GRAY), None, fx=x_scale, fy=y_scale, interpolation=interpolation)
+
+
+class ReplayBuffer():
+    # A row that starts an episode holds its first frame; every other row holds the frame
+    # after a transition, with that transition's action, reward and termination.
+    # `count` is the number of rows written so far; row n is stored at n % maxlen.
+    # An existing buffer in `path` is reopened, so a resumed run continues with its data.
+    def __init__(self, state_shape, maxlen, path='buffer', action_shape=(), action_dtype=np.ubyte):
         self.maxlen = maxlen
-        self.current_idx = 0
-        
-        self.file = h5py.File("buffer.hdf5", "w")
-        
-        self.actions = self.file.create_dataset('actions', (0,), maxshape=(maxlen,), dtype=np.ubyte)
-        self.states = self.file.create_dataset('states', (0,)+state_shape, maxshape=(maxlen,)+state_shape, dtype=np.float32)
-        self.next_states = self.file.create_dataset('next_states', (0,)+state_shape, maxshape=(maxlen,)+state_shape, dtype=np.float32)
-        self.rewards = self.file.create_dataset('rewards', (0,), maxshape=(maxlen,), dtype=np.float32)
-        self.terminates = self.file.create_dataset('terminates', (0,), maxshape=(maxlen,), dtype=np.bool)
-        
-    def append(self, actions, states, next_states, rewards, terminates):
-        add_size = actions.shape[0]
-        if self.actions.shape[0]<self.maxlen:
-            self._resize(self.actions.shape[0], add_size)
-            
-        add_idx = add_size
-        end_idx = self.current_idx + add_idx
-        
-        if end_idx >= self.maxlen:
-            add_idx-= end_idx - self.maxlen
-            end_idx = self.maxlen
+        self.n_frames = state_shape[2]
+        self.path = path
+        os.makedirs(path, exist_ok=True)
 
-        self.actions[self.current_idx:end_idx] = actions[:add_idx]
-        self.states[self.current_idx:end_idx] = states[:add_idx]
-        self.next_states[self.current_idx:end_idx] = next_states[:add_idx]
-        self.rewards[self.current_idx:end_idx] = rewards[:add_idx]
-        self.terminates[self.current_idx:end_idx] = terminates[:add_idx]
-        
-        self.current_idx = end_idx
-        if self.current_idx == self.maxlen:
-            self.current_idx = 0
-        if add_idx != add_size:
-            self.append(actions[add_idx:], states[add_idx:], next_states[add_idx:], rewards[add_idx:], terminates[add_idx:])
-            
-    def extend(self, obj):
-        self.append(np.array(obj.action, dtype=np.ubyte), \
-                    np.array(obj.state, dtype=np.float32), \
-                    np.array(obj.next_state, dtype=np.float32), \
-                    np.array(obj.reward, dtype=np.float32), \
-                    np.array(obj.terminate, dtype=np.bool))
-        
-    def _resize(self, current_size, add_size):
-        new_size = current_size + add_size
-        if new_size > self.maxlen:
-            new_size = self.maxlen
-        self.actions.resize(new_size, axis=0)
-        self.states.resize(new_size, axis=0)
-        self.next_states.resize(new_size, axis=0)
-        self.rewards.resize(new_size, axis=0)
-        self.terminates.resize(new_size, axis=0)
-        
-    def sample(self, start_idx, end_idx):
-#         length = self.length()
-#         if length <= n_samples:
-#             return self.actions[:], \
-#                 self.states[:], \
-#                 self.next_state[:], \
-#                 self.rewards[:], \
-#                 self.terminates[:] 
+        def array(name, shape, dtype):
+            file = os.path.join(path, name + '.npy')
+            if not os.path.exists(file):
+                return np.lib.format.open_memmap(file, mode='w+', dtype=dtype, shape=shape)
+            existing = np.load(file, mmap_mode='r+')
+            if existing.shape != shape or existing.dtype != dtype:
+                raise ValueError(file + ' does not match the buffer size, frame size or action type')
+            return existing
+        self.frames = array('frames', (maxlen,) + state_shape[:2], np.uint8)
+        self.first = array('first', (maxlen,), np.bool_)
+        self.actions = array('actions', (maxlen,) + action_shape, action_dtype)
+        self.rewards = array('rewards', (maxlen,), np.float32)
+        self.terminates = array('terminates', (maxlen,), np.bool_)
+        self.count = array('count', (1,), np.int64)
 
-#         start_idx = np.random.randint(length-n_samples+1)
-#         end_idx = start_idx+n_samples
-        
-        return self.actions[start_idx:end_idx], \
-                self.states[start_idx:end_idx], \
-                self.next_states[start_idx:end_idx], \
-                self.rewards[start_idx:end_idx], \
-                self.terminates[start_idx:end_idx]
-                
-    def length(self):
-        return len(self.actions)
-    
-    def close(self):
-        if self.file:
-            self.file.close()
-            os.remove('buffer.hdf5')
-        self.file = None
-        
-    def __del__(self):
-        self.close()    
+    def __getstate__(self):
+        # Other processes map the same files instead of receiving a copy of them.
+        return {'maxlen': self.maxlen, 'n_frames': self.n_frames, 'path': self.path}
 
-class Memory():
-    def __init__(self, maxlen=None):
-        self.action = deque(maxlen=maxlen)
-        self.state = deque(maxlen=maxlen)
-        self.next_state = deque(maxlen=maxlen)
-        self.reward = deque(maxlen=maxlen)
-        self.terminate = deque(maxlen=maxlen)
-    
-    def append(self, action, state, next_state, reward, terminate):
-        self.action.append(action)
-        self.state.append(state)
-        self.next_state.append(next_state)
-        self.reward.append(reward)
-        self.terminate.append(terminate)
-        
-    def sample(self, n_samples=None):
-        if not n_samples or len(self.action) <= n_samples:
-            return np.array(self.action, dtype=np.int), np.array(self.state, dtype=np.float32), np.array(self.next_state, dtype=np.float32), np.array(self.reward, dtype=np.float32), np.array(self.terminate, dtype=np.bool) 
-        
-        action, state, next_state, reward, terminate = shuffle(self.action, self.state, self.next_state, self.reward, self.terminate, n_samples=n_samples)
-        return np.array(action, dtype=np.int), np.array(state, dtype=np.float32), np.array(next_state, dtype=np.float32), np.array(reward, dtype=np.float32), np.array(terminate, dtype=np.bool) 
-    
-    def length(self):
-        return len(self.action)
-    
-    def extend(self, obj):
-        self.action.extend(obj.action)
-        self.state.extend(obj.state)
-        self.next_state.extend(obj.next_state)
-        self.reward.extend(obj.reward)
-        self.terminate.extend(obj.terminate)
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        for name in ('frames', 'first', 'actions', 'rewards', 'terminates', 'count'):
+            setattr(self, name, np.load(os.path.join(self.path, name + '.npy'), mmap_mode='r'))
+
+    def _write(self, frame, first, action=0, reward=0.0, terminate=False):
+        # The row is complete before the count includes it.
+        idx = int(self.count[0]) % self.maxlen
+        self.frames[idx], self.first[idx], self.actions[idx] = frame, first, action
+        self.rewards[idx], self.terminates[idx] = reward, terminate
+        self.count[0] += 1
+
+    def start_episode(self, frame):
+        self._write(frame, True)
+
+    def append(self, action, next_frame, reward, terminate):
+        self._write(next_frame, False, action, float(reward), bool(terminate))
+
+
+class ReplayDataset(Dataset):
+    """Transition n of the buffer, or None if the buffer overwrote it while it was read."""
+    def __init__(self, buffer):
+        self.buffer = buffer
+
+    def __getitem__(self, n):
+        buffer, maxlen = self.buffer, self.buffer.maxlen
+        rows = np.arange(n - buffer.n_frames, n + 1)
+        # Stacks repeat an episode's first frame rather than reach into the previous episode.
+        rows = np.maximum(rows, rows[buffer.first[rows % maxlen]].max(initial=rows[0]))
+        # The state and the next state share all but one image, so each image travels once.
+        item = {'actions': torch.tensor(buffer.actions[n % maxlen]),
+                'frames': torch.from_numpy(buffer.frames[rows % maxlen]),
+                'rewards': torch.tensor(buffer.rewards[n % maxlen]),
+                'terminates': torch.tensor(buffer.terminates[n % maxlen])}
+        # Row r is overwritten while row r + maxlen is written.
+        if rows[0] <= buffer.count[0] - maxlen:
+            return None
+        return item
+
+
+class ReplaySampler(Sampler):
+    """Endless batches of uniformly random transitions, without the oldest 1% of the
+    buffer, which is overwritten next."""
+    def __init__(self, buffer, batch_size):
+        self.buffer = buffer
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        buffer = self.buffer
+        while True:
+            count = int(buffer.count[0])
+            low = max(count - buffer.maxlen + buffer.n_frames + buffer.maxlen // 100, 1)
+            rows = np.empty(0, np.int64)
+            while len(rows) < self.batch_size:
+                candidates = np.random.randint(low, count, self.batch_size)
+                rows = np.concatenate((rows, candidates[~buffer.first[candidates % buffer.maxlen]]))
+            yield rows[:self.batch_size].tolist()
+
+
+def collate(items):
+    return default_collate([item for item in items if item is not None])
+
+
+def loader(buffer, batch_size):
+    return DataLoader(ReplayDataset(buffer), batch_sampler=ReplaySampler(buffer, batch_size),
+                      num_workers=loader_workers, collate_fn=collate, pin_memory=torch.cuda.is_available(),
+                      multiprocessing_context='spawn' if loader_workers else None,
+                      persistent_workers=loader_workers > 0)
+
+
+def to_device(batch, device):
+    batch = {key: value.to(device, non_blocking=True) for key, value in batch.items()}
+    frames = batch.pop('frames')
+    return {**batch, 'states': frames[:, :-1], 'next_states': frames[:, 1:]}
+
+
+def convnet(state_size, outputs):
+    height, width, frames = state_size
+    return nn.Sequential(
+        nn.Conv2d(frames, 32, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Conv2d(64, 64, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Flatten(),
+        nn.Linear(128 * math.ceil(height / 16) * math.ceil(width / 16), outputs),
+    )
+
+
+class Normalize(nn.Module):
+    def forward(self, states):
+        return states.float() / 255.0
+
+
+def autocast(device):
+    return torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == 'cuda')
+
+
+def fit(model, batch, loss):
+    model.optimizer.zero_grad()
+    batch_loss = loss(batch)
+    batch_loss.backward()
+    model.optimizer.step()
+    return float(batch_loss.detach())
+
+
+def synchronize(device):
+    if device.type == 'cuda':
+        torch.cuda.synchronize(device)
+
+
+class EMA():
+    # The learner process updates the weights in place while the car's process drives with them.
+    # GPU work is finished before the lock is released, and the learner holds it only for the update.
+    def __init__(self, model, decay):
+        self.module = copy.deepcopy(model).eval()
+        self.decay = decay
+        self.lock = context.Lock()
+
+    def update(self, model):
+        device = next(model.parameters()).device
+        synchronize(device)
+        with self.lock, torch.no_grad():
+            for average, parameter in zip(self.module.parameters(), model.parameters()):
+                average.lerp_(parameter, 1 - self.decay)
+            synchronize(device)
+
+    def __call__(self, *inputs):
+        with torch.inference_mode(), self.lock, autocast(inputs[0].device):
+            outputs = self.module(*inputs).float()
+            synchronize(inputs[0].device)
+        return outputs
+
+
+def save_checkpoint(path, **state):
+    # Write then rename, so Ctrl-C never leaves a truncated checkpoint.
+    temporary = path + '.tmp'
+    torch.save(state, temporary)
+    os.replace(temporary, path)
+
+
+def load_checkpoint(path):
+    return torch.load(path, map_location='cpu', weights_only=True)

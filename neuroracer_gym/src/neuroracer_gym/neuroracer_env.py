@@ -1,195 +1,203 @@
+import math
 import time
+import uuid
 
 import numpy as np
 
-import rospy
-from gazebo_msgs.msg import ModelState 
-from gazebo_msgs.srv import SetModelState
+import rclpy
+from rclpy.context import Context
+from rclpy.executors import SingleThreadedExecutor
+from ros_gz_interfaces.msg import Entity
+from ros_gz_interfaces.srv import ControlWorld, SetEntityPose
 
-from openai_ros import robot_gazebo_env
-from sensor_msgs.msg import LaserScan, CompressedImage
-from cv_bridge import CvBridge, CvBridgeError
-# from std_msgs.msg import Float64
-# from sensor_msgs.msg import Image
-# from tf.transformations import quaternion_from_euler
+from sensor_msgs.msg import LaserScan, Image
+from nav_msgs.msg import Odometry
+from cv_bridge import CvBridge
 
-from ackermann_msgs.msg import AckermannDriveStamped
+from geometry_msgs.msg import Twist
 
-from gym import spaces
-from gym.envs.registration import register
+import gymnasium as gym
+from gymnasium import spaces
 
-# import cv2
+default_timeout = 30.0
 
-default_sleep = 1
+WHEELBASE = 0.325
+WHEEL_RADIUS = 0.05
+STEP_SIZE = 0.001  # racecar_tunnel.sdf max_step_size
+PERIOD = 0.1  # model.sdf sensor update period
+# Start points (x, y) in racecar_tunnel.sdf; each episode starts at one of them with a random heading.
+# At least 1 m from the walls, so the car can turn away from any heading.
+START_POINTS = ((1.5, 3.7), (2.25, 3.7), (3.0, 3.7), (3.75, 3.7))
 
-class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
+class NeuroRacerEnv(gym.Env):
     def __init__(self):
-        
+
         self.initial_position = None
-        
+
         self.min_distance = .255
 
         self.bridge = CvBridge()
 
-        # Doesnt have any accesibles
-        self.controllers_list = []
+        self.timeout = default_timeout
+        self.context = Context()
+        rclpy.init(context=self.context)
+        self.node = rclpy.create_node('neuroracer_env_' + uuid.uuid4().hex[:8], context=self.context)
+        self.executor = SingleThreadedExecutor(context=self.context)
+        self.executor.add_node(self.node)
 
-        # It doesnt use namespace
-        self.robot_name_space = ""
+        self.control = self.node.create_client(ControlWorld, '/world/racecar_tunnel/control')
+        self.set_model_state = self.node.create_client(SetEntityPose, '/world/racecar_tunnel/set_pose')
 
-        # We launch the init function of the Parent Class robot_gazebo_env.RobotGazeboEnv
-        super(NeuroRacerEnv, self).__init__(controllers_list=self.controllers_list,
-                                            robot_name_space=self.robot_name_space,
-                                            reset_controls=False,
-                                            start_init_physics_parameters=False)
+        self.camera_msg = self.laser_scan = self.odom = None
+        self.camera_time = self.laser_time = self.odom_time = -1.0
+        self.subscriptions = [
+            self.node.create_subscription(Image, '/camera/image_raw', self._camera_callback, 1),
+            self.node.create_subscription(LaserScan, '/scan', self._laser_scan_callback, 1),
+            self.node.create_subscription(Odometry, '/odom', self._odom_callback, 1),
+        ]
 
-        rospy.wait_for_service('/gazebo/set_model_state')
-        try:
-            self.set_model_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
-        except rospy.ServiceException as e:
-            print("Service call failed: %s" % e)
-
-
-        self.gazebo.unpauseSim()
-        time.sleep(default_sleep)
-
-        #self.controllers_object.reset_controllers()
-        self._check_all_sensors_ready()
-        
-        self._init_camera()
-
-        self.laser_subscription = rospy.Subscriber("/scan", LaserScan, self._laser_scan_callback)
-        
-        self.drive_control_publisher= rospy.Publisher("/vesc/ackermann_cmd_mux/input/navigation",
-                                                       AckermannDriveStamped,
-                                                       queue_size=20)
+        self.drive_control_publisher = self.node.create_publisher(Twist, '/cmd_vel', 20)
+        self.closed = False
 
         self._check_publishers_connection()
 
-        self.gazebo.pauseSim()
-        
-        rospy.logdebug("Finished NeuroRacerEnv INIT...")
+        self._check_all_sensors_ready()
+
+        self._init_camera()
+
+        self.node.get_logger().debug("Finished NeuroRacerEnv INIT...")
 
     def reset_position(self):
-        if not self.initial_position:
-            return
-        state_msg = ModelState()
-        state_msg.model_name = 'racecar'
-        state_msg.pose.position.x = self.initial_position['p_x']
-        state_msg.pose.position.y = self.initial_position['p_y']
-        state_msg.pose.position.z = self.initial_position['p_z']
-        state_msg.pose.orientation.x = self.initial_position['o_x']
-        state_msg.pose.orientation.y = self.initial_position['o_y']
-        state_msg.pose.orientation.z = self.initial_position['o_z']
-        state_msg.pose.orientation.w = self.initial_position['o_w']
+        # Teleport: a Gazebo Jetty world reset recreates plugins without a Reset hook.
+        self.start = None
+        position = self.initial_position or self._random_start()
+        q = np.array([position['o_x'], position['o_y'], position['o_z'], position['o_w']], dtype=np.float64)
+        q /= np.linalg.norm(q)
+        state_msg = SetEntityPose.Request()
+        state_msg.entity.name = 'racecar'
+        state_msg.entity.type = Entity.MODEL
+        state_msg.pose.position.x = float(position['p_x'])
+        state_msg.pose.position.y = float(position['p_y'])
+        state_msg.pose.position.z = float(position['p_z'])
+        state_msg.pose.orientation.x, state_msg.pose.orientation.y, \
+            state_msg.pose.orientation.z, state_msg.pose.orientation.w = map(float, q)
 
-        self.set_model_state(state_msg)
+        self._call(self.set_model_state, state_msg)
 
-    def reset(self):
-        super(NeuroRacerEnv, self).reset()
-        self.gazebo.unpauseSim()
+    def _random_start(self):
+        self.start = int(self.np_random.integers(len(START_POINTS)))
+        x, y = START_POINTS[self.start]
+        yaw = self.np_random.uniform(-math.pi, math.pi)
+        return {'p_x': x, 'p_y': y, 'p_z': 0.05, 'o_x': 0.0, 'o_y': 0.0, 'o_z': math.sin(yaw / 2), 'o_w': math.cos(yaw / 2)}
+
+    def reset(self, *, seed=None, options=None):
+        super(NeuroRacerEnv, self).reset(seed=seed)
+        self._check_publishers_connection()
+        self._set_init_pose()
+        for _ in range(3):  # A teleport keeps velocities, so brake first.
+            self._advance()
         self.reset_position()
+        self._advance()
+        self._init_env_variables()
 
-        time.sleep(default_sleep)
-        self.gazebo.pauseSim()
+        return self._get_obs(), {**self._info(), 'start': self.start}
 
-        return self._get_obs()
+    def step(self, action):
+        if not self.action_space.contains(action):
+            raise ValueError('Action is outside the action space: {}'.format(action))
+        self._set_action(action)
+        self._advance()
+        obs = self._get_obs()
+        done = self._is_done(obs)
+        reward = self._compute_reward(obs, done)
+        return obs, reward, done, False, self._info()
 
-    def _check_all_systems_ready(self):
-        """
-        Checks that all the sensors, publishers and other simulation systems are
-        operational.
-        """
-        self._check_all_sensors_ready()
-        return True
+    def close(self):
+        if self.closed:
+            return
+        try:
+            self.steering(0, speed=0)
+        finally:
+            self.executor.shutdown()
+            self.node.destroy_node()
+            self.context.shutdown()
+            self.closed = True
 
+    def _wait(self, predicate, description):
+        deadline = time.monotonic() + self.timeout
+        while not predicate():
+            if time.monotonic() >= deadline:
+                raise TimeoutError('Timed out waiting for ' + description + '; start scripts/dev sim or web')
+            if not self.context.ok():
+                raise RuntimeError('ROS context shut down')
+            self.executor.spin_once(timeout_sec=0.05)
+
+    def _call(self, client, request):
+        self._wait(client.service_is_ready, client.srv_name)
+        future = client.call_async(request)
+        self._wait(future.done, client.srv_name + ' response')
+        result = future.result()
+        if result is None or not result.success:
+            raise RuntimeError('Gazebo service failed: ' + client.srv_name)
+
+    def _stamps(self):
+        return self.camera_time, self.laser_time, self.odom_time
+
+    def _advance(self):
+        # Stepping while paused makes every action last exactly one period.
+        previous = self._stamps()
+        request = ControlWorld.Request()
+        request.world_control.pause = True
+        request.world_control.multi_step = round(PERIOD / STEP_SIZE)
+        self._call(self.control, request)
+        self._wait(lambda: all(now >= before + PERIOD - STEP_SIZE / 2
+                               for now, before in zip(self._stamps(), previous)),
+                   'camera, lidar, and odometry')
+
+    def _info(self):
+        info = {}
+        if self.odom is not None:
+            info['position'] = np.array([self.odom.position.x, self.odom.position.y], dtype=np.float64)
+            q = self.odom.orientation
+            info['yaw'] = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        return info
 
     # virtual methods
     # ----------------------------
 
     def _check_all_sensors_ready(self):
-        rospy.logdebug("START ALL SENSORS READY")
-        self._check_laser_scan_ready()
-        self._check_camera_ready()
-        rospy.logdebug("ALL SENSORS READY")
+        self.node.get_logger().debug("START ALL SENSORS READY")
+        # The paused world publishes sensors only while it advances.
+        self._advance()
+        self.node.get_logger().debug("ALL SENSORS READY")
 
-    def _check_camera_ready(self):
-        self.camera_msg = None
-        rospy.logdebug("Waiting for /camera/zed/rgb/image_rect_color/compressed to be READY...")
-        while self.camera_msg is None and not rospy.is_shutdown():
-            try:
-                self.camera_msg = rospy.wait_for_message('/camera/zed/rgb/image_rect_color/compressed',
-                                          CompressedImage,
-                                          timeout=1.0)
-            except:
-                rospy.logerr("Camera not ready yet, retrying for getting camera_msg")
-        
     def _init_camera(self):
         img = self.get_camera_image()
 
-        # self.color_scale = "bgr8" # config["color_scale"]
         self.input_shape = img.shape
-        obs_low = 0
-        obs_high = 1
-        self.observation_space = spaces.Box(low=obs_low, high=obs_high, shape=self.input_shape)
-
-        img_dims = img.shape[0]*img.shape[1]*img.shape[2]
-        byte_size = 4
-        overhaead = 2 # reserving memory for ros header
-        buff_size = img_dims*byte_size*overhaead
-        self.camera_msg = rospy.Subscriber("/camera/zed/rgb/image_rect_color/compressed", 
-                        CompressedImage, self._camera_callback, queue_size=1, 
-                        buff_size=buff_size)
-        rospy.logdebug("== Camera READY ==")
-
-    def _check_laser_scan_ready(self):
-        self.laser_scan = None
-        rospy.logdebug("Waiting for /scan to be READY...")
-        while self.laser_scan is None and not rospy.is_shutdown():
-            try:
-                self.laser_scan = rospy.wait_for_message("/scan", LaserScan, timeout=1.0)
-                rospy.logdebug("Current /scan READY=>")
-
-            except:
-                rospy.logerr("Current /scan not ready yet, retrying for getting laser_scan")
-        return self.laser_scan
-
-#     def _get_additional_laser_scan(self):
-#         laser_scans = []
-#         self.gazebo.unpauseSim()
-#         while len(laser_scans) < 2  and not rospy.is_shutdown():
-#             try:
-#                 data = rospy.wait_for_message("/scan", LaserScan, timeout=1.0)
-#                 laser_scans.append(data.ranges)
-#             except Exception as e:
-#                 rospy.logerr("getting laser data...")
-#                 print(e)
-#         self.gazebo.pauseSim()
-
-#         return laser_scans
+        self.observation_space = spaces.Box(low=0, high=255, shape=self.input_shape, dtype=np.uint8)
+        self.node.get_logger().debug("== Camera READY ==")
 
     def _laser_scan_callback(self, data):
         self.laser_scan = data
+        self.laser_time = data.header.stamp.sec + data.header.stamp.nanosec * 1e-9
 
     def _camera_callback(self, msg):
         self.camera_msg = msg
+        self.camera_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+    def _odom_callback(self, msg):
+        self.odom = msg.pose.pose
+        self.odom_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
     def _check_publishers_connection(self):
         """
         Checks that all the publishers are working
         :return:
         """
-        rate = rospy.Rate(10)  # 10hz
-        while self.drive_control_publisher.get_num_connections() == 0 and not rospy.is_shutdown():
-            rospy.logdebug("No susbribers to drive_control_publisher yet so we wait and try again")
-            try:
-                rate.sleep()
-            except rospy.ROSInterruptException:
-                # This is to avoid error when world is rested, time when backwards.
-                pass
-        rospy.logdebug("drive_control_publisher Publisher Connected")
-
-        rospy.logdebug("All Publishers READY")
+        self._wait(lambda: self.drive_control_publisher.get_subscription_count() > 0
+                   and all(s.get_publisher_count() > 0 for s in self.subscriptions), 'ROS/Gazebo bridge')
+        self.node.get_logger().debug("All Publishers READY")
 
     def _set_init_pose(self):
         """Sets the Robot in its init pose
@@ -218,49 +226,30 @@ class NeuroRacerEnv(robot_gazebo_env.RobotGazeboEnv):
     def _is_done(self, observations):
         self._episode_done = self._is_collided()
         return self._episode_done
-        
-    def _create_steering_command(self, steering_angle, speed):
-        # steering_angle = np.clip(steering_angle,self.steerin_angle_min, self.steerin_angle_max)
-        
-        a_d_s = AckermannDriveStamped()
-        a_d_s.drive.steering_angle = steering_angle
-        a_d_s.drive.steering_angle_velocity = 0.0
-        a_d_s.drive.speed = speed  # from 0 to 1
-        a_d_s.drive.acceleration = 0.0
-        a_d_s.drive.jerk = 0.0
 
-        return a_d_s
+    def _create_steering_command(self, steering_angle, speed):
+        # racecar_control's servo_commands.py: wheel rate = speed / 0.1.
+        command = Twist()
+        command.linear.x = float(speed) / 0.1 * WHEEL_RADIUS
+        # angular.z is the yaw rate, not the steering angle.
+        command.angular.z = command.linear.x * math.tan(float(steering_angle)) / WHEELBASE
+
+        return command
 
     def steering(self, steering_angle, speed):
         command = self._create_steering_command(steering_angle, speed)
         self.drive_control_publisher.publish(command)
 
-    # def get_odom(self):
-    #     return self.odom
-        
-    # def get_imu(self):
-    #     return self.imu
-        
     def get_laser_scan(self):
         return np.array(self.laser_scan.ranges, dtype=np.float32)
-    
+
     def get_camera_image(self):
-        try:
-            cv_image = self.bridge.compressed_imgmsg_to_cv2(self.camera_msg).astype('float32')
-        except Exception as e:
-            rospy.logerr("CvBridgeError: Error converting image")
-            rospy.logerr(e)
-        return cv_image
+        return self.bridge.imgmsg_to_cv2(self.camera_msg, desired_encoding='bgr8')
 
     def _is_collided(self):
         r = self.get_laser_scan()
         crashed = np.any(r <= self.min_distance)
         if crashed:
-#             rospy.logdebug('the auto crashed! :(')
-#             rospy.logdebug('distance: {}'.format(r.min()))
-#             data = np.array(self._get_additional_laser_scan(), dtype=np.float32)
-#             data = np.concatenate((np.expand_dims(r, axis=0), data), axis=0)
-#             data_mean = np.mean(data, axis=0)
             min_range_idx = r.argmin()
             min_idx = min_range_idx - 5
             if min_idx < 0:

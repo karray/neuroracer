@@ -1,16 +1,19 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.20)
 project(neuroracer_gym_rl)
 
-find_package(catkin REQUIRED COMPONENTS
-  neuroracer_gym
-  rospy
+find_package(ament_cmake REQUIRED)
+
+install(PROGRAMS
+  scripts/training.py
+  DESTINATION lib/${PROJECT_NAME}
 )
-
-
-catkin_package(
-
+install(FILES
+  scripts/neuroracer_discrete.py
+  scripts/utils.py
+  scripts/dqn.py
+  scripts/ddpg.py
+  DESTINATION lib/${PROJECT_NAME}
 )
+install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 
-include_directories(
-    ${catkin_INCLUDE_DIRS}
-)
+ament_package()

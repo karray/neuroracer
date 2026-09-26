@@ -1,0 +1,6 @@
+[agent]
+class = "ddpg.Agent"
+
+[training]
+env_id = "NeuroRacer-v1"
+warmup_steps = 500

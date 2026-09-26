@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)"
+compose=(docker compose -f compose.yaml)
+if [[ "${NEURORACER_GPU:-1}" != 0 ]] && docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+  compose+=(-f compose.gpu.yaml)
+fi
+entry=/workspace/docker/entrypoint.sh
+exec_options=(-T)
+if [[ -t 0 && -t 1 ]]; then exec_options=(); fi
+case "${1:-help}" in
+  setup) "${compose[@]}" build; "${compose[@]}" up -d; "$0" build; "$0" check ;;
+  build) "${compose[@]}" exec -T dev bash "$entry" bash -c 'python /usr/bin/colcon --log-base .colcon/log build --base-paths neuroracer_gym neuroracer_gym_rl neuroracer_sim --build-base .colcon/build --install-base .colcon/install --symlink-install' ;;
+  up) "${compose[@]}" up -d ;;
+  down) "${compose[@]}" --profile web down ;;
+  shell) "${compose[@]}" exec dev bash "$entry" bash ;;
+  # The tests publish telemetry; their own ROS domain keeps it out of a running viewer.
+  check) "${compose[@]}" exec -T -e ROS_DOMAIN_ID=43 dev bash "$entry" python -m pytest neuroracer_gym/test neuroracer_gym_rl/test -q ;;
+  check-sim) "${compose[@]}" exec -T dev bash "$entry" timeout 120 python scripts/check-sim.py ;;
+  sim) exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/start.sh false ;;
+  web)
+    "${compose[@]}" exec -T dev flock -n /tmp/neuroracer-sim.lock true || {
+      echo 'A simulator is already running; stop it before switching modes.' >&2; exit 1;
+    }
+    "${compose[@]}" --profile web up -d --build --no-deps web
+    echo 'GzWeb: http://localhost:8090 (world starts paused)'
+    trap '"${compose[@]}" --profile web stop web >/dev/null' EXIT
+    "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/start.sh true
+    ;;
+  vnc) exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/vnc.sh ;;
+  train)
+    shift
+    exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" ros2 run neuroracer_gym_rl training.py "$@"
+    ;;
+  drive)
+    shift
+    exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" ros2 run neuroracer_gym_rl training.py "$1" --drive "${2:-10}"
+    ;;
+  notebook)
+    echo 'Jupyter Lab: http://localhost:8888/lab/tree/q_learning.ipynb'
+    exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" jupyter lab --ip 0.0.0.0 --port 8888 --no-browser --IdentityProvider.token='' --ServerApp.password=''
+    ;;
+  help|-h|--help) echo "Usage: $0 {setup|build|up|down|shell|check|check-sim|sim|web|vnc|notebook|train CONFIG [--resume]|drive CONFIG [EPISODES]}" ;;
+  *) echo "Unknown command: $1" >&2; exit 2 ;;
+esac

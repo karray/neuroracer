@@ -20,3 +20,16 @@ overlay/*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# ROS 2 development workspace
+.colcon/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+
+# PyTorch training artifacts
+runs/
+*.pt
+
+# Local scratch and test scripts
+tmp/

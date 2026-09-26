@@ -1,0 +1,19 @@
+cmake_minimum_required(VERSION 3.22)
+project(neuroracer_websocket)
+foreach(vendor sim common fuel_tools msgs plugin transport)
+  find_package(gz_${vendor}_vendor REQUIRED)
+endforeach()
+find_package(gz-sim REQUIRED)
+find_package(gz-common REQUIRED COMPONENTS graphics)
+find_package(gz-fuel_tools REQUIRED)
+find_package(gz-msgs REQUIRED)
+find_package(gz-plugin REQUIRED COMPONENTS register)
+find_package(gz-transport REQUIRED)
+find_package(libwebsockets REQUIRED)
+add_library(neuroracer-websocket-system SHARED WebsocketServer.cc)
+target_compile_features(neuroracer-websocket-system PRIVATE cxx_std_17)
+target_link_libraries(neuroracer-websocket-system PRIVATE
+  gz-sim::gz-sim gz-common::gz-common gz-common::graphics
+  gz-fuel_tools::gz-fuel_tools gz-msgs::core gz-plugin::register
+  gz-transport::core websockets_shared)
+install(TARGETS neuroracer-websocket-system LIBRARY DESTINATION lib)

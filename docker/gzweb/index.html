@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NeuroRacer · Gazebo</title><link rel="icon" href="data:,">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#151c26;color:#edf2f8;font:14px system-ui,sans-serif}header{height:64px;display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid #354153}strong{font-size:18px;margin-right:10px}#status{color:#b1c3d9;margin-right:auto}button,a{font:inherit;color:inherit;background:#26364b;border:1px solid #465a72;border-radius:6px;padding:8px 12px;text-decoration:none;cursor:pointer}button:hover,a:hover{background:#39506e}button[aria-pressed=true]{background:#39506e;border-color:#b1c3d9}#gz-scene{height:calc(100dvh - 102px);width:100%;overflow:hidden}canvas{display:block}#images{position:fixed;right:16px;bottom:46px;width:min(320px,45vw);max-height:calc(100dvh - 130px);overflow:auto;display:flex;flex-direction:column;gap:8px}#images[hidden]{display:none}#images>div{display:contents}#images figure{margin:0;overflow:hidden;border:1px solid #465a72;border-radius:6px;background:#000}#images img{display:block;width:100%;image-rendering:pixelated}#images figcaption{padding:4px 8px;background:#151c26;color:#b1c3d9;font:12px ui-monospace,monospace}#telemetry-panel{position:fixed;left:16px;bottom:46px;width:max-content;min-width:220px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 130px);overflow:auto;padding:8px 12px;border:1px solid #465a7299;border-radius:6px;background:#151c2680;text-shadow:0 1px 2px #000;font:12px ui-monospace,monospace;font-variant-numeric:tabular-nums}#telemetry-panel h2{margin:6px 0 4px;font-size:12px;color:#b1c3d9}#telemetry-panel dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0}#telemetry-panel dd{margin:0;text-align:right;overflow-wrap:anywhere}#telemetry-panel .error{color:#ff8a80}#telemetry-panel canvas{grid-column:1/-1;width:100%;height:36px}footer{height:38px;padding:9px 20px;color:#b1c3d9;font-size:12px} @media(max-width:760px){header{height:auto;flex-wrap:wrap}#gz-scene{height:75dvh}}
+</style>
+</head>
+<body>
+<header><strong>NeuroRacer</strong><span id="status" role="status">Connecting…</span><button id="connect">Disconnect</button><button id="telemetry" aria-pressed="true">Telemetry</button></header>
+<main id="gz-scene" aria-label="Live Gazebo scene"></main>
+<aside id="telemetry-panel" aria-label="Training telemetry" hidden></aside>
+<aside id="images" aria-label="Training images" hidden></aside>
+<footer>Drag to orbit · Scroll to zoom</footer>
+<script type="module" src="/app.js"></script>
+</body></html>

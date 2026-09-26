@@ -1,0 +1,42 @@
+name: neuroracer
+services:
+  dev:
+    image: neuroracer:lyrical
+    build:
+      context: docker
+    init: true
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/docker/entrypoint.sh"]
+    command: ["sleep", "infinity"]
+    environment:
+      HOME: /tmp/neuroracer-home
+      ROS_DOMAIN_ID: "42"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      GZ_PARTITION: neuroracer
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      LP_NUM_THREADS: "4"
+      QT_X11_NO_MITSHM: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/workspace
+    ports:
+      - "127.0.0.1:8091:8091"
+      - "127.0.0.1:8888:8888"
+    shm_size: 1gb
+    stop_grace_period: 20s
+
+  web:
+    profiles: [web]
+    image: neuroracer-gzweb:local
+    build: ./docker/gzweb
+    depends_on: [dev]
+    # GzWeb first fetches meshes by their simulator file path; serving that path over
+    # HTTP makes them browser-cacheable instead of re-sent over Gazebo's WebSocket.
+    volumes:
+      - ./neuroracer_sim/models:/usr/share/nginx/html/workspace/.colcon/install/neuroracer_sim/share/neuroracer_sim/models:ro
+    ports:
+      - "127.0.0.1:8090:8090"
+    mem_limit: 128m
+    pids_limit: 32
+    restart: "no"

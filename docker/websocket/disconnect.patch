@@ -1,0 +1,24 @@
+OnDisconnect erases a connection's message queue without subtracting it from
+messageCount, so after a browser disconnects mid-stream the run-loop wait
+predicate stays true and the event thread busy-loops on a CPU core.
+Upstream fix: https://github.com/gazebosim/gz-sim/pull/4016
+
+--- a/WebsocketServer.cc
++++ b/WebsocketServer.cc
+@@ -643,6 +643,16 @@
+   if (this->connections.find(_socketId) == this->connections.end())
+     return;
+ 
++  // NeuroRacer: remove discarded messages from the run-loop wake counter.
++  // Otherwise a disconnect with queued data leaves messageCount > 0 forever,
++  // turning the event thread into a busy loop even with no clients.
++  {
++    std::lock_guard<std::mutex> connectionLock(
++        this->connections[_socketId]->mutex);
++    std::lock_guard<std::mutex> runLock(this->runMutex);
++    this->messageCount -= static_cast<int>(
++        this->connections[_socketId]->buffer.size());
++  }
+   this->connections.erase(_socketId);
+ 
+   // Somewhat slow operation.

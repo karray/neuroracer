@@ -1,0 +1,2 @@
+[agent]
+class = "dqn.Agent"

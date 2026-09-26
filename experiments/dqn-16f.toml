@@ -1,0 +1,5 @@
+[agent]
+class = "dqn.Agent"
+
+[training]
+n_frames = 16  # the last 16 camera images as input channels, so the network sees motion

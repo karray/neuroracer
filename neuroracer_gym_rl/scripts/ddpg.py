@@ -1,213 +1,136 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-import time
 import os
-import csv
 
 import numpy as np
 
-import rospy
-import rospkg
+import torch
+from torch import nn
 
-import gym
-from neuroracer_gym.tasks import neuroracer_continuous_task
+from utils import ReplayBuffer, convnet, Normalize, EMA, autocast, to_device, save_checkpoint, load_checkpoint, loginfo
 
-# from gym.spaces import Box
+class OrnsteinUhlenbeckProcess:
+    def __init__(self, theta, mu=0., sigma=1., dt=1e-2, size=1):
+        self.theta, self.mu, self.sigma, self.dt, self.size = theta, mu, sigma, dt, size
+        self.x_prev = np.zeros(size)
 
-# from keras import backend as k
-# from keras.layers.core import Reshape
-# from keras.optimizers import Adam
-from keras.initializers import RandomUniform, VarianceScaling
-from keras.layers import Conv2D, Dense, Dropout, Flatten, Input, concatenate, add
-from keras.models import Model
-from keras.regularizers import l2
-from keras.callbacks import Callback as KerasCallback
-from keras.optimizers import Adam
+    def sample(self):
+        x = self.x_prev + self.theta * (self.mu - self.x_prev) * self.dt \
+            + self.sigma * np.sqrt(self.dt) * np.random.normal(size=self.size)
+        self.x_prev = x
+        return x
 
-from rl.agents import DDPGAgent
-from rl.memory import SequentialMemory
-from rl.random import OrnsteinUhlenbeckProcess
 
+class Critic(nn.Module):
+    def __init__(self, state_size, nb_actions):
+        super(Critic, self).__init__()
+        self.observation = nn.Sequential(Normalize(), convnet(state_size, 200), nn.ReLU())
+        self.value = nn.Sequential(nn.Linear(200 + nb_actions, 200), nn.ReLU(), nn.Linear(200, 1))
+        nn.init.uniform_(self.value[-1].weight, -3e-4, 3e-4)
+        nn.init.zeros_(self.value[-1].bias)
+
+    def forward(self, states, actions):
+        return self.value(torch.cat((self.observation(states), actions), dim=1)).squeeze(1)
 
 
 class Agent:
-    def __init__(self, env):
-        # rospack = rospkg.RosPack()
-        # self.working_dir = rospack.get_path('neuroracer_gym_rl')
-        # self.weight_backup      = os.path.join(self.working_dir, "neuroracer.h5")
-        self.env = env
+    def __init__(self, state_size, action_size, buffer_max_size=1000000, working_dir='.', batch_size=16,
+                 learning_rate_actor=0.0001, learning_rate_critic=0.001, gamma=0.9, ema_decay=0.999, l2=0.01):
+        self.weight_backup      = os.path.join(working_dir, 'ddpg_{}f.pt'.format(state_size[2]))
 
-        self.observation_space = self.env.observation_space
-        self.action_space = self.env.action_space
-        self.nb_actions  = self.env.action_space.shape[0]
-        self.batch_size = 16
-        self.max_buffer = 100000
-        self.window_length = 16
-        self.memory = SequentialMemory(limit=self.max_buffer, window_length=self.window_length)
-        self.learning_rate_actor = 0.0001
-        self.learning_rate_critic = 0.001
-        self.gamma              = 0.9
-        self.exploration_rate   = 0.95
-        self.exploration_min    = 0.01
-        self.exploration_decay  = 0.995
+        self.state_size = state_size
+        self.nb_actions  = action_size
+        self.batch_size = batch_size
+        self.buffer = ReplayBuffer(state_size, buffer_max_size, os.path.join(working_dir, 'buffer'),
+                               action_shape=(action_size,), action_dtype=np.float32)
+        self.learning_rate_actor = learning_rate_actor
+        self.learning_rate_critic = learning_rate_critic
+        self.gamma              = gamma
+        self.exploration_rate   = None
+        self.ema_decay          = ema_decay
+        self.l2 = l2
+        self.device             = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.progress           = {'steps': 0, 'episodes': 0, 'updates': 0}
+        self.loss               = None
+        self.q                  = None
 
-        random_process = OrnsteinUhlenbeckProcess(size=self.nb_actions, theta=.15, mu=0., sigma=.2)
+        self.random_process = OrnsteinUhlenbeckProcess(size=self.nb_actions, theta=.15, mu=0., sigma=.2)
 
-        actor = self._create_actor()        
-        critic, critic_action_input = self._create_critic(self.nb_actions)
+        self.actor = self._create_actor().to(self.device)
+        self.critic = self._create_critic().to(self.device)
+        # The targets follow once per epoch, as many updates as a full buffer has batches, by the
+        # per-update decay compounded over the epoch.
+        self.updates_per_epoch = buffer_max_size // batch_size
+        self.target_actor = EMA(self.actor, self.ema_decay ** self.updates_per_epoch)
+        self.target_critic = EMA(self.critic, self.ema_decay ** self.updates_per_epoch)
+        self.actor.optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.learning_rate_actor, eps=1e-7)
+        self.critic.optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.learning_rate_critic, eps=1e-7)
 
-        self.model = DDPGAgent(nb_actions=self.nb_actions, 
-                                actor=actor, 
-                                critic=critic,
-                                critic_action_input=critic_action_input,
-                                memory=self.memory,
-                                nb_steps_warmup_critic=500,
-                                nb_steps_warmup_actor=500,
-                                random_process=random_process,
-                                gamma=self.gamma,
-                                target_model_update=.001,
-                                # processor=self.processor,
-                                batch_size=self.batch_size)
-        self.model.compile(
-            (Adam(lr=self.learning_rate_actor, clipnorm=1.), Adam(lr=self.learning_rate_critic, clipnorm=1.)),
-            metrics=['mse'])
+        if os.path.isfile(self.weight_backup):
+            checkpoint = load_checkpoint(self.weight_backup)
+            self.actor.load_state_dict(checkpoint['actor'])
+            self.critic.load_state_dict(checkpoint['critic'])
+            self.target_actor.module.load_state_dict(checkpoint['target_actor'])
+            self.target_critic.module.load_state_dict(checkpoint['target_critic'])
+            self.actor.optimizer.load_state_dict(checkpoint['actor_optimizer'])
+            self.critic.optimizer.load_state_dict(checkpoint['critic_optimizer'])
+            self.progress = checkpoint['progress']
 
 
     def _create_actor(self):
-        # input_shape = (self.window_length,) + self.observation_space.shape
-        S = Input(shape=self.observation_space.shape)
-        # S_reshape = Reshape(input_shape)(S)
-        c1 = Conv2D(32, kernel_size=(4, 4), activation='relu', padding="valid",
-                    kernel_initializer=VarianceScaling(mode='fan_in', distribution='uniform'))(S)
-        c2 = Conv2D(32, kernel_size=(4, 4), activation='relu',
-                    kernel_initializer=VarianceScaling(mode='fan_in', distribution='uniform'))(c1)
-        c3 = Conv2D(32, kernel_size=(4, 4), activation='relu',
-                    kernel_initializer=VarianceScaling(mode='fan_in', distribution='uniform'))(c2)
-        c3_flatten = Flatten(name='flattened_observation')(c3)
-        d1 = Dense(200, activation='relu', kernel_initializer='glorot_uniform')(c3_flatten)
-        d2 = Dense(200, activation='relu', kernel_initializer='glorot_uniform')(d1)
-        
-        Steer = Dense(self.nb_actions,
-                      activation='tanh',
-                      name='prediction',
-                      bias_initializer='zeros',
-                      kernel_initializer=RandomUniform(minval=-3e-4, maxval=3e-4)
-                      )(d2)
-        # Speed = Dense(1,
-        #               activation='sigmoid',
-        #               bias_initializer='zeros',
-        #               kernel_initializer=RandomUniform(minval=0.0, maxval=3e-4)
-        #               )(d2)
-        # V = concatenate([Steer, Speed], name='merge_concatenate')
-        
-        model = Model(inputs=S, outputs=Steer)  # TODO use 'V' once multi output is supported by keras-rl
+        backbone = convnet(self.state_size, self.nb_actions)
+        nn.init.uniform_(backbone[-1].weight, -3e-4, 3e-4)
+        nn.init.zeros_(backbone[-1].bias)
+        model = nn.Sequential(Normalize(), backbone, nn.Tanh())
 
-        print(model.summary())
+        loginfo(model)
 
         return model
 
-    def _create_critic(self, nb_actions=None):
-        # input_shape = (self.window_length,) + self.observation_space.shape
-        S = Input(shape=self.observation_space.shape)
-        # S_reshape = Reshape(input_shape)(S)
-        c1 = Conv2D(32, kernel_size=(4, 4), activation='relu', padding="valid",
-                    kernel_initializer=VarianceScaling(mode='fan_in', distribution='uniform'),
-                    kernel_regularizer=l2(0.01))(S)
-        c2 = Conv2D(32, kernel_size=(4, 4), activation='relu',
-                    kernel_initializer=VarianceScaling(mode='fan_in', distribution='uniform'),
-                    kernel_regularizer=l2(0.01))(c1)
-        c3 = Conv2D(32, kernel_size=(4, 4), activation='relu',
-                    kernel_initializer=VarianceScaling(mode='fan_in', distribution='uniform'),
-                    kernel_regularizer=l2(0.01))(c2)
-        observation_flattened = Flatten()(c3)
-        O = Dense(200, activation='relu', kernel_initializer='glorot_uniform',
-                  kernel_regularizer=l2(0.01))(observation_flattened)
+    def _create_critic(self):
+        model = Critic(self.state_size, self.nb_actions)
 
-        A = Input(shape=self.action_space.shape, name='action_input')
+        loginfo(model)
 
-        # TODO activate once Speed is activated
-        # a1 = Dense(200, activation='relu', kernel_initializer='glorot_uniform',
-        #            kernel_regularizer=l2(0.01))(A)
-        # h1 = add([O,a1], name='merge_sum')
+        return model
 
-        # TODO use upper h1 instead of this one with Speed activated
-        h1 = concatenate([O, A], name='merge_concatenate')
-        h2 = Dense(units=200, activation='relu', kernel_initializer='glorot_uniform',
-                   kernel_regularizer=l2(0.01))(h1)
-        V = Dense(nb_actions,
-                  activation='linear',
-                  bias_initializer='zeros',
-                  kernel_initializer=RandomUniform(minval=-3e-4, maxval=3e-4),
-                  kernel_regularizer=l2(0.01)
-                  )(h2)
-        model = Model(inputs=[S, A], outputs=V)
+    def save_model(self):
+        save_checkpoint(self.weight_backup, actor=self.actor.state_dict(), critic=self.critic.state_dict(),
+                        target_actor=self.target_actor.module.state_dict(), target_critic=self.target_critic.module.state_dict(),
+                        actor_optimizer=self.actor.optimizer.state_dict(),
+                        critic_optimizer=self.critic.optimizer.state_dict(), progress=dict(self.progress))
+        loginfo("Model saved")
 
-        print (model.summary())
+    def act(self, state, explore=True):
+        action = self.target_actor(torch.as_tensor(state, device=self.device))[0].cpu().numpy()
+        if explore:
+            action = action + self.random_process.sample()
+        return np.clip(action, -1, 1).astype(np.float32)
 
-        return model, A
+    def _optimize(self, model, loss):
+        model.optimizer.zero_grad()
+        loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
+        model.optimizer.step()
 
-    def train(self, env=None, nb_steps=50000, nb_max_episode_steps=5000, nb_episodes_test=20, action_repetition=1,
-              verbose=0):
-
-        # TODO callback for save depending on loss value?
-        self.model.fit(self.env,
-                       nb_max_episode_steps=nb_max_episode_steps,
-                       nb_steps=nb_steps,
-                       action_repetition=action_repetition,
-                       visualize=False)
-
-        self.model.test(self.env,
-                               nb_episodes=nb_episodes_test,
-                               visualize=False,
-                               nb_max_episode_steps=nb_max_episode_steps)
-
-
-
-class StatsCallback(KerasCallback):
-    def _set_env(self, env, path, interval=5000):
-        self.model_file_path = os.path.join(path, 'model_checkpoint.h5')
-        self.stats_file_path = os.path.join(path, 'stats_{}.csv'.format(time.time()))
-        self.env = env
-        self.episode_time = time.time()
-        self.total_time = time.time()
-        self.interval = interval
-        self.total_steps = 0
-
-    # def on_episode_begin(self, episode, logs={}):
-    #     pass
-
-    def on_episode_end(self, episode, logs={}):
-        rospy.loginfo("Episode {}; steps{}; reward {}".format(episode, self.env.cumulated_steps, self.env.cumulated_reward))
-        rospy.loginfo("Time {}, total {}".format(self.format_time(self.episode_time), 
-                                                        self.format_time(self.total_time)))
-        # with open(self.stats_file_path, newline='') as csvfile:
-        #     writer = csv.writer(csvfile, delimiter=';')
-        #     writer.writerow([episode, self.env.cumulated_steps, self.env.cumulated_reward, self.episode_time, self.total_time])
-
-    # def on_step_begin(self, step, logs={}):
-    #     pass
-
-    def on_step_end(self, step, logs={}):
-        self.total_steps += 1
-        if self.total_steps % self.interval != 0:
-            return
-        # filepath = self.model_file_path.format(step=self.total_steps)
-        # rospy.loginfo('Saving model to {}'.format(self.total_steps, filepath))
-        self.model.save_weights(self.model_file_path, overwrite=True)
-    # def on_action_begin(self, action, logs={}):
-    #     pass
-
-    # def on_action_end(self, action, logs={}):
-    #     pass
-
-    def format_time(self, t):
-        m, s = divmod(int(time.time() - t), 60)
-        h, m = divmod(m, 60)
-        return "%d:%02d:%02d" % (h, m, s)
-
-if __name__ == '__main__':
-    rospy.init_node('neuroracer_ddpg', anonymous=True, log_level=rospy.INFO)
-    
-    env = gym.make('NeuroRacer-v1')
-    agent = Agent(env)
-    agent.train()
+    def replay(self, batch):
+        batch = to_device(batch, self.device)
+        states, actions = batch['states'], batch['actions']
+        with torch.no_grad(), autocast(self.device):
+            next_values = self.target_critic.module(batch['next_states'], self.target_actor.module(batch['next_states'])).float()
+            targets = batch['rewards'] + self.gamma * (~batch['terminates']).float() * next_values
+        with autocast(self.device):
+            values = self.critic(states, actions)
+        critic_loss = nn.functional.mse_loss(values.float(), targets)
+        critic_loss = critic_loss + self.l2 * sum(module.weight.pow(2).sum() for module in self.critic.modules()
+                                                  if isinstance(module, (nn.Conv2d, nn.Linear)))
+        self._optimize(self.critic, critic_loss)
+        with autocast(self.device):
+            actor_loss = -self.critic(states, self.actor(states)).float().mean()
+        self._optimize(self.actor, actor_loss)
+        self.progress['updates'] += 1
+        if self.progress['updates'] % self.updates_per_epoch == 0:
+            self.target_actor.update(self.actor)
+            self.target_critic.update(self.critic)
+        self.loss = float(critic_loss.detach())
+        self.q = float(values.detach().float().mean())
