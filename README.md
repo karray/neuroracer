@@ -44,8 +44,7 @@ See [training details](docs/pytorch-training.md).
 The simulator is headless: Gazebo renders the camera with EGL (on the GPU when the container has one), so no X server is needed.
 
 ### Gazebo Web ###
->Gzweb is a WebGL client for Gazebo. Like gzclient, it's a front-end graphical interface to gzserver and provides visualization of the simulation. However, Gzweb is a thin client in comparison, and lets you interact with the simulation from the comfort of a web browser. This means cross-platform support, minimal client-side installation, and support for mobile devices.
->[Gzweb](http://gazebosim.org/gzweb.html)
+>[GzWeb](https://github.com/gazebo-web/gzweb) is a WebGL library for visualizing Gazebo simulations in a web browser. It connects to Gazebo's WebSocket server plugin.
 
 `./scripts/dev web` serves it at `http://localhost:8090`, and `./scripts/dev vnc` the full Gazebo desktop (see [visualization](docs/visualization.md)).
 
