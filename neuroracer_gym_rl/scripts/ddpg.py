@@ -102,9 +102,10 @@ class Agent:
                         critic_optimizer=self.critic.optimizer.state_dict(), progress=dict(self.progress))
         loginfo("Model saved")
 
-    def act(self, state):
+    def act(self, state, explore=True):
         action = self.target_actor(torch.as_tensor(state, device=self.device))[0].cpu().numpy()
-        action = action + self.random_process.sample()
+        if explore:
+            action = action + self.random_process.sample()
         return np.clip(action, -1, 1).astype(np.float32)
 
     def _optimize(self, model, loss):

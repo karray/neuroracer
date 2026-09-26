@@ -5,7 +5,12 @@ Start `./scripts/dev web` or `sim` first and keep it running.
 ```bash
 ./scripts/dev train experiments/dqn.toml            # a new run in runs/dqn
 ./scripts/dev train experiments/dqn.toml --resume   # continue it
+./scripts/dev drive experiments/dqn.toml 10         # drive its model for 10 episodes
 ```
+
+`drive` runs the EMA network without exploration or training and saves nothing;
+it prints each episode's length, return and whether the car crashed, then the
+means. It takes the config of a run, like `--resume`.
 
 An experiment is a TOML file in `experiments/`:
 

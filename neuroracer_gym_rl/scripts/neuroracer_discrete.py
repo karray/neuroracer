@@ -177,7 +177,8 @@ class NeuroRacer:
 
                     cumulated_reward += reward
                     progress['steps'] += 1
-                    telemetry.publish(step=progress['steps'], episode=progress['episodes'] + 1, episode_step=episode_steps,
+                    telemetry.publish(run=os.path.basename(self.working_dir), mode='train', step=progress['steps'],
+                                      episode=progress['episodes'] + 1, episode_step=episode_steps,
                                       action=np.asarray(action).tolist(), reward=float(reward), crashed=bool(terminated),
                                       episode_return=float(cumulated_reward), exploration=self.agent.exploration_rate,
                                       start=info.get('start'))
@@ -210,3 +211,38 @@ class NeuroRacer:
                 self.env.close()
             loginfo("Total time: {}".format(self.format_time(total_time)))
             loginfo("Total steps: {}".format(steps))
+
+    def drive(self, n_episodes):
+        """Drives with the EMA network and no exploration, without training or saving anything."""
+        episodes = []
+        telemetry = Telemetry('/telemetry/car')
+        try:
+            while len(episodes) < n_episodes:
+                state, info = self.env.reset()
+                state = preprocess(state, self.img_y_offset, self.img_x_scale, self.img_y_scale)
+                stacked_states = deque([state] * self.n_frames, maxlen=self.n_frames)
+                done, episode_steps, cumulated_reward = False, 0, 0
+                while not done:
+                    action = self.agent.act(np.expand_dims(np.stack(stacked_states, axis=0), axis=0), explore=False)
+                    next_state, reward, terminated, truncated, _ = self.env.step(action)
+                    done = terminated or truncated
+                    stacked_states.append(preprocess(next_state, self.img_y_offset, self.img_x_scale, self.img_y_scale))
+                    episode_steps += 1
+                    cumulated_reward += reward
+                    telemetry.publish(run=os.path.basename(self.working_dir), mode='drive', episode=len(episodes) + 1,
+                                      episode_step=episode_steps,
+                                      action=np.asarray(action).tolist(), reward=float(reward), crashed=bool(terminated),
+                                      episode_return=float(cumulated_reward), start=info.get('start'))
+                episodes.append({'steps': episode_steps, 'return': float(cumulated_reward), 'crashed': bool(terminated),
+                                 'start': info.get('start')})
+                loginfo("episode {}: {}".format(len(episodes), json.dumps(episodes[-1])))
+        except KeyboardInterrupt:
+            pass
+        finally:
+            telemetry.close()
+            self.env.close()
+        if episodes:
+            loginfo("{} episodes: mean steps {:.1f}, mean return {:.1f}, crashed {}".format(
+                len(episodes), np.mean([e['steps'] for e in episodes]), np.mean([e['return'] for e in episodes]),
+                sum(e['crashed'] for e in episodes)))
+        return episodes

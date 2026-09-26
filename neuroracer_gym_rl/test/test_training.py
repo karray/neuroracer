@@ -183,6 +183,13 @@ def test_run_trains_for_its_epochs_and_resumes_to_the_total(tmp_path):
     checkpoint = load_checkpoint(game.agent.weight_backup)
     assert checkpoint['progress']['updates'] == 75 and checkpoint['progress']['steps'] > steps
 
+    # Driving changes neither the run's model nor its buffer.
+    game = NeuroRacer(small_dqn, str(tmp_path), **settings)
+    count = int(game.agent.buffer.count[0])
+    assert game.drive(2) == [{'steps': 5, 'return': 5.0, 'crashed': True, 'start': None}] * 2
+    assert game.env.unwrapped.closed and game.agent.buffer.count[0] == count
+    assert load_checkpoint(game.agent.weight_backup)['progress'] == checkpoint['progress']
+
 
 def test_learner_trains_the_shared_agent_without_waiting(tmp_path):
     agent = make_agent('dqn', tmp_path)

@@ -29,6 +29,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Train an agent as an experiment config describes; Ctrl-C stops and saves it.')
     parser.add_argument('config', help='Experiment config, e.g. experiments/dqn.toml; the run goes to runs/<config name>')
     parser.add_argument('--resume', action='store_true', help='Continue the run of this config')
+    parser.add_argument('--drive', type=int, metavar='EPISODES',
+                        help="Drive this config's run for EPISODES episodes without training or exploration")
     args = parser.parse_args(remove_ros_args(sys.argv if argv is None else argv)[1:])
 
     with open(args.config, 'rb') as file:
@@ -47,9 +49,9 @@ def main(argv=None):
 
     working_dir = os.path.join('runs', os.path.splitext(os.path.basename(args.config))[0])
     settings_path = os.path.join(working_dir, 'config.json')
-    if args.resume:
+    if args.resume or args.drive is not None:
         if not os.path.exists(settings_path):
-            sys.exit('There is no run to resume in ' + working_dir)
+            sys.exit('There is no run in ' + working_dir)
         with open(settings_path) as file:
             saved = json.load(file)
         # Only the number of epochs may change: anything else is a new experiment.
@@ -61,8 +63,9 @@ def main(argv=None):
         if os.path.exists(working_dir):
             sys.exit(working_dir + ' exists; pass --resume to continue it')
         os.makedirs(working_dir)
-    with open(settings_path, 'w') as file:
-        json.dump(settings, file, indent=2)
+    if args.drive is None:
+        with open(settings_path, 'w') as file:
+            json.dump(settings, file, indent=2)
 
     random.seed(seed)
     np.random.seed(seed)
@@ -72,7 +75,10 @@ def main(argv=None):
     loginfo("Gym environment done")
     loginfo("Agent is " + config['agent']['class'])
 
-    game.run()
+    if args.drive is None:
+        game.run()
+    else:
+        game.drive(args.drive)
 
 
 if __name__ == '__main__':

@@ -15,7 +15,8 @@ case "${1:-help}" in
   up) "${compose[@]}" up -d ;;
   down) "${compose[@]}" --profile web down ;;
   shell) "${compose[@]}" exec dev bash "$entry" bash ;;
-  check) "${compose[@]}" exec -T dev bash "$entry" python -m pytest neuroracer_gym/test neuroracer_gym_rl/test -q ;;
+  # The tests publish telemetry; their own ROS domain keeps it out of a running viewer.
+  check) "${compose[@]}" exec -T -e ROS_DOMAIN_ID=43 dev bash "$entry" python -m pytest neuroracer_gym/test neuroracer_gym_rl/test -q ;;
   check-sim) "${compose[@]}" exec -T dev bash "$entry" timeout 120 python scripts/check-sim.py ;;
   sim) exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" bash docker/start.sh false ;;
   web)
@@ -32,10 +33,14 @@ case "${1:-help}" in
     shift
     exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" ros2 run neuroracer_gym_rl training.py "$@"
     ;;
+  drive)
+    shift
+    exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" ros2 run neuroracer_gym_rl training.py "$1" --drive "${2:-10}"
+    ;;
   notebook)
     echo 'Jupyter Lab: http://localhost:8888/lab/tree/q_learning.ipynb'
     exec "${compose[@]}" exec "${exec_options[@]}" dev bash "$entry" jupyter lab --ip 0.0.0.0 --port 8888 --no-browser --IdentityProvider.token='' --ServerApp.password=''
     ;;
-  help|-h|--help) echo "Usage: $0 {setup|build|up|down|shell|check|check-sim|sim|web|vnc|notebook|train CONFIG [--resume]}" ;;
+  help|-h|--help) echo "Usage: $0 {setup|build|up|down|shell|check|check-sim|sim|web|vnc|notebook|train CONFIG [--resume]|drive CONFIG [EPISODES]}" ;;
   *) echo "Unknown command: $1" >&2; exit 2 ;;
 esac

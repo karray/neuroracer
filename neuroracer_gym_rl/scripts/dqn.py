@@ -72,8 +72,8 @@ class Agent():
         fraction = min(self.progress['steps'] / self.exploration_steps, 1.0)
         return self.exploration_start + fraction * (self.exploration_min - self.exploration_start)
 
-    def act(self, state):
-        if np.random.rand() <= self.exploration_rate:
+    def act(self, state, explore=True):
+        if explore and np.random.rand() <= self.exploration_rate:
             return random.randrange(self.action_size)
         act_values = self.target_model(torch.as_tensor(state, device=self.device))
         return int(act_values[0].argmax())
