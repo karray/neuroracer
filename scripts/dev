@@ -11,7 +11,7 @@ exec_options=(-T)
 if [[ -t 0 && -t 1 ]]; then exec_options=(); fi
 case "${1:-help}" in
   setup) "${compose[@]}" build; "${compose[@]}" up -d; "$0" build; "$0" check ;;
-  build) "${compose[@]}" exec -T dev bash "$entry" bash -c 'python /usr/bin/colcon --log-base .colcon/log build --base-paths neuroracer_gym neuroracer_gym_rl neuroracer_sim neuroracer_websocket --build-base .colcon/build --install-base .colcon/install --symlink-install' ;;
+  build) "${compose[@]}" exec -T dev bash "$entry" bash -c 'python /usr/bin/colcon --log-base .colcon/log build --base-paths neuroracer_gym neuroracer_gym_rl neuroracer_sim --build-base .colcon/build --install-base .colcon/install --symlink-install' ;;
   up) "${compose[@]}" up -d ;;
   down) "${compose[@]}" --profile web down ;;
   shell) "${compose[@]}" exec dev bash "$entry" bash ;;

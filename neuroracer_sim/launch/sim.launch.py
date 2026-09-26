@@ -1,7 +1,7 @@
 from pathlib import Path
 import tempfile
 import xml.etree.ElementTree as ET
-from ament_index_python.packages import get_package_share_directory, get_package_prefix
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable, Shutdown, OpaqueFunction, RegisterEventHandler
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -18,7 +18,7 @@ def _server(context):
     if LaunchConfiguration('web').perform(context).lower() == 'true':
         tree = ET.parse(world)
         plugin = ET.SubElement(tree.getroot().find('world'), 'plugin', {
-            'filename': str(Path(get_package_prefix('neuroracer_websocket')) / 'lib/libneuroracer-websocket-system.so'),
+            'filename': '/opt/neuroracer/lib/libneuroracer-websocket-system.so',
             'name': 'gz::sim::systems::WebsocketServer',
         })
         for name, value in {'port': 9002, 'publication_hz': 20,

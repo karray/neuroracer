@@ -27,5 +27,6 @@ cache; during a running session use
 GzWeb 3.0.2 is pinned and patched by `patch-gzweb.mjs`, which fails the build if
 the upstream source changes.
 
-`neuroracer_websocket` is Jetty 10.5.0's WebSocket plugin with a disconnect fix
-(see [UPSTREAM.md](../neuroracer_websocket/UPSTREAM.md)).
+The image builds Jetty 10.5.0's WebSocket plugin from pinned upstream source
+with [a disconnect fix](../docker/websocket/disconnect.patch). Drop it once
+[gz-sim#4016](https://github.com/gazebosim/gz-sim/pull/4016) is released.
