@@ -38,7 +38,7 @@ model. `ddpg.py` or `ddpg_learning.launch` trains `experiments/ddpg.toml` (DDPG 
   `NeuroRacer-v1`: continuous steering in [-1, 1].
 - Observations are 480×640 BGR camera images.
 - Each step advances the paused world by 0.1 s.
-- Each episode starts at one of four points (x = 1, 2, 3, 4 at y = 3.7) with a
+- Each episode starts at one of four points (x = 1.5, 2.25, 3, 3.75 at y = 3.7) with a
   random heading. Training truncates episodes after `max_episode_steps`.
 
 ## Training

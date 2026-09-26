@@ -26,7 +26,8 @@ WHEEL_RADIUS = 0.05
 STEP_SIZE = 0.001  # racecar_tunnel.sdf max_step_size
 PERIOD = 0.1  # model.sdf sensor update period
 # Start points (x, y) in racecar_tunnel.sdf; each episode starts at one of them with a random heading.
-START_POINTS = ((1.0, 3.7), (2.0, 3.7), (3.0, 3.7), (4.0, 3.7))
+# At least 1 m from the walls, so the car can turn away from any heading.
+START_POINTS = ((1.5, 3.7), (2.25, 3.7), (3.0, 3.7), (3.75, 3.7))
 
 class NeuroRacerEnv(gym.Env):
     def __init__(self):
