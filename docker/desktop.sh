@@ -25,7 +25,7 @@ children+=("$!")
 websockify --web=/usr/share/novnc 0.0.0.0:8091 127.0.0.1:5900 &
 children+=("$!")
 export GZ_SIM_RESOURCE_PATH="/workspace/.colcon/install/neuroracer_sim/share/neuroracer_sim/models${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
-gz sim -g --gui-config /workspace/.colcon/install/neuroracer_sim/share/neuroracer_sim/config/gui.config &
+gz sim -g &
 children+=("$!")
 echo 'Gazebo Jetty: http://localhost:8091/vnc.html?autoconnect=true&resize=scale'
 wait -n

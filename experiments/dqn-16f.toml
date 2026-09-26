@@ -1,6 +1,3 @@
-# Keys override the defaults of the agent class's keyword arguments ([agent]) and of
-# NeuroRacer's ([training]); runs/<config name>/config.json lists every value used.
-
 [agent]
 class = "dqn.Agent"
 

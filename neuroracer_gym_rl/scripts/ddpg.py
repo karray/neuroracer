@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 
 import numpy as np
 
@@ -117,8 +116,6 @@ class Agent:
     def replay(self, batch):
         batch = to_device(batch, self.device)
         states, actions = batch['states'], batch['actions']
-        self.actor.train()
-        self.critic.train()
         with torch.no_grad(), autocast(self.device):
             next_values = self.target_critic.module(batch['next_states'], self.target_actor.module(batch['next_states'])).float()
             targets = batch['rewards'] + self.gamma * (~batch['terminates']).float() * next_values
@@ -137,8 +134,3 @@ class Agent:
             self.target_critic.update(self.critic)
         self.loss = float(critic_loss.detach())
         self.q = float(values.detach().float().mean())
-
-
-if __name__ == '__main__':
-    from training import main
-    main([sys.argv[0], 'experiments/ddpg.toml'] + sys.argv[1:])

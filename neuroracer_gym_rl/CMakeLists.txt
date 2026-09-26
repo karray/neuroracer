@@ -5,13 +5,13 @@ find_package(ament_cmake REQUIRED)
 
 install(PROGRAMS
   scripts/training.py
-  scripts/ddpg.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(FILES
   scripts/neuroracer_discrete.py
   scripts/utils.py
   scripts/dqn.py
+  scripts/ddpg.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})

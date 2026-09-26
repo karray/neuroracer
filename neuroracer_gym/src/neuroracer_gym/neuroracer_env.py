@@ -106,11 +106,7 @@ class NeuroRacerEnv(gym.Env):
         if not self.action_space.contains(action):
             raise ValueError('Action is outside the action space: {}'.format(action))
         self._set_action(action)
-        try:
-            self._advance()
-        except Exception:
-            self.steering(0, speed=0)
-            raise
+        self._advance()
         obs = self._get_obs()
         done = self._is_done(obs)
         reward = self._compute_reward(obs, done)
@@ -121,8 +117,6 @@ class NeuroRacerEnv(gym.Env):
             return
         try:
             self.steering(0, speed=0)
-            if self.control.service_is_ready():
-                self._pause()
         finally:
             self.executor.shutdown()
             self.node.destroy_node()
@@ -146,11 +140,6 @@ class NeuroRacerEnv(gym.Env):
         if result is None or not result.success:
             raise RuntimeError('Gazebo service failed: ' + client.srv_name)
 
-    def _pause(self):
-        request = ControlWorld.Request()
-        request.world_control.pause = True
-        self._call(self.control, request)
-
     def _stamps(self):
         return self.camera_time, self.laser_time, self.odom_time
 
@@ -166,7 +155,7 @@ class NeuroRacerEnv(gym.Env):
                    'camera, lidar, and odometry')
 
     def _info(self):
-        info = {'sim_time': self.camera_time}
+        info = {}
         if self.odom is not None:
             info['position'] = np.array([self.odom.position.x, self.odom.position.y], dtype=np.float64)
             q = self.odom.orientation

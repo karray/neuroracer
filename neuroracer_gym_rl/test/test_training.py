@@ -197,7 +197,9 @@ def test_learner_trains_the_shared_agent_without_waiting(tmp_path):
     ema_before = [parameter.clone() for parameter in agent.target_model.module.parameters()]
     learner = Learner(agent, n_updates=10 ** 9, warmup_steps=7, metrics_path=str(tmp_path / 'updates.jsonl'))
     learner.start()
-    time.sleep(15)
+    deadline = time.monotonic() + 60
+    while learner.updates.value <= 16 and time.monotonic() < deadline:
+        time.sleep(0.1)
     learner.stop({'steps': 24, 'episodes': 3})
     assert learner.exitcode == 0
     checkpoint = load_checkpoint(agent.weight_backup)
