@@ -29,8 +29,8 @@ The run folder `runs/<config name>/` holds `config.json` with every value used,
 the checkpoint, `episodes.jsonl`, `updates.jsonl` and the replay buffer. A new run
 refuses an existing folder. `--resume` continues a run when the config differs
 only in `n_epochs`, with its replay buffer. Ctrl-C stops training and saves the
-model. `ddpg.py` or `ddpg_learning.launch` trains `experiments/ddpg.toml` (DDPG on
-`NeuroRacer-v1`). Evaluation is in `q_learning.ipynb` (`./scripts/dev notebook`).
+model. `experiments/ddpg.toml` trains DDPG on `NeuroRacer-v1`. Evaluation is in
+`q_learning.ipynb` (`./scripts/dev notebook`).
 
 ## Environment
 
@@ -88,9 +88,9 @@ Side effects:
 | dqn | convolutions → 512 → 3 Q-values | 0.9998 | 256 | Huber, Double DQN, γ 0.99 |
 | ddpg | convolutions → actor and critic | 0.999 | 16 | MSE, γ 0.9 |
 
-`ema_decay` is per update, as in timm's `ModelEmaV3`, and compounds over the
-epoch: DQN's EMA moves 1 − 0.9998^3,906 ≈ 54% of the way to the network once per
-epoch, DDPG's (0.999 over 62,500 updates) practically the whole way.
+`ema_decay` is per update and compounds over the epoch: DQN's EMA moves
+1 − 0.9998^3,906 ≈ 54% of the way to the network once per epoch, DDPG's (0.999
+over 62,500 updates) practically the whole way.
 
 The networks start with four 3×3 convolutions with stride 2 (32, 64, 64 and 128
 channels) on 56×128 grayscale images: the camera image without its top 200

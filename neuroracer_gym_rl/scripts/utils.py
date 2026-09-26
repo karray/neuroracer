@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import copy
 from functools import partial
 import math
 import os
@@ -10,7 +11,6 @@ import torch
 from torch import nn
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, Dataset, Sampler, default_collate
-from timm.utils import ModelEmaV3
 
 loginfo = partial(print, flush=True)
 context = mp.get_context('spawn')
@@ -150,7 +150,6 @@ def autocast(device):
 
 
 def fit(model, batch, loss):
-    model.train()
     model.optimizer.zero_grad()
     batch_loss = loss(batch)
     batch_loss.backward()
@@ -167,15 +166,16 @@ class EMA():
     # The learner process updates the weights in place while the car's process drives with them.
     # GPU work is finished before the lock is released, and the learner holds it only for the update.
     def __init__(self, model, decay):
-        self.ema = ModelEmaV3(model, decay=decay)
-        self.module = self.ema.module
+        self.module = copy.deepcopy(model).eval()
+        self.decay = decay
         self.lock = context.Lock()
 
     def update(self, model):
         device = next(model.parameters()).device
         synchronize(device)
-        with self.lock:
-            self.ema.update(model)
+        with self.lock, torch.no_grad():
+            for average, parameter in zip(self.module.parameters(), model.parameters()):
+                average.lerp_(parameter, 1 - self.decay)
             synchronize(device)
 
     def __call__(self, *inputs):

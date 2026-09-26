@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<launch>
-    <!-- Launch the training system -->
-    <node pkg="neuroracer_gym_rl" name="neuroracer_gym_rl" exec="ddpg.py" output="screen"/>
-</launch>

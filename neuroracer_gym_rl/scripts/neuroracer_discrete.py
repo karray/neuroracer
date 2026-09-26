@@ -1,4 +1,5 @@
 from collections import deque
+import gc
 import json
 import os
 import signal
@@ -73,6 +74,7 @@ class Learner(context.Process):
         self._save()
         telemetry.close()
         del self.agent  # Releases the GPU memory shared with the car's process, which owns it.
+        gc.collect()  # torch's lazy imports during the first update keep its frames, which hold shared tensors, in cycles.
 
     def _save(self):
         self.saving.clear()
