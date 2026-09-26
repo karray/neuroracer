@@ -1,3 +1,4 @@
+import base64
 from collections import deque
 import gc
 import json
@@ -6,6 +7,7 @@ import signal
 import time
 import uuid
 
+import cv2
 import numpy as np
 import gymnasium as gym
 import rclpy
@@ -17,15 +19,21 @@ from utils import context, preprocess, loader, loginfo
 
 
 class Telemetry():
-    """JSON on a ROS topic, which the bridge forwards to GzWeb's telemetry panel."""
+    """Fields for GzWeb's telemetry panel as JSON on a ROS topic, which the bridge forwards to Gazebo.
+    Each field is a (name, type, value) tuple; docs/visualization.md describes the format."""
     def __init__(self, topic):
         self.context = Context()
         rclpy.init(context=self.context)
         self.node = rclpy.create_node('telemetry_' + uuid.uuid4().hex[:8], context=self.context)
         self.publisher = self.node.create_publisher(String, topic, 1)
 
-    def publish(self, **values):
-        self.publisher.publish(String(data=json.dumps(values)))
+    def publish(self, *fields):
+        message = {'version': 1, 'fields': [{'name': name, 'type': type, 'value': value} for name, type, value in fields]}
+        self.publisher.publish(String(data=json.dumps(message)))
+
+    @staticmethod
+    def image(image):
+        return 'data:image/png;base64,' + base64.b64encode(cv2.imencode('.png', image)[1]).decode()
 
     def close(self):
         self.node.destroy_node()
@@ -53,7 +61,7 @@ class Learner(context.Process):
         self.recent = []  # (loss, Q, dropped transitions) of each update since the last save
         telemetry = Telemetry('/telemetry/learner')
         while buffer.count[0] < self.warmup_steps and not self.stopping.wait(0.1):
-            telemetry.publish(buffer=int(buffer.count[0]), warmup_steps=self.warmup_steps)
+            telemetry.publish(('buffer', 'text', int(buffer.count[0])), ('warmup_steps', 'text', self.warmup_steps))
         if not self.stopping.is_set():
             published = time.monotonic(), agent.progress['updates']
             for batch in loader(buffer, agent.batch_size):
@@ -64,9 +72,10 @@ class Learner(context.Process):
                 self.recent.append((agent.loss, agent.q, agent.batch_size - len(batch['rewards'])))
                 if time.monotonic() - published[0] >= 1:
                     updates = agent.progress['updates']
-                    telemetry.publish(updates=updates, epoch=updates // agent.updates_per_epoch, loss=agent.loss,
-                                      q=agent.q, updates_per_s=(updates - published[1]) / (time.monotonic() - published[0]),
-                                      buffer=int(buffer.count[0]))
+                    telemetry.publish(('updates', 'text', updates), ('epoch', 'text', updates // agent.updates_per_epoch),
+                                      ('loss', 'graph', agent.loss), ('q', 'graph', agent.q),
+                                      ('updates_per_s', 'graph', (updates - published[1]) / (time.monotonic() - published[0])),
+                                      ('buffer', 'text', int(buffer.count[0])))
                     published = time.monotonic(), updates
                 if self.saving.is_set():
                     self._save()
@@ -179,11 +188,12 @@ class NeuroRacer:
 
                     cumulated_reward += reward
                     progress['steps'] += 1
-                    telemetry.publish(run=os.path.basename(self.working_dir), mode='train', step=progress['steps'],
-                                      episode=progress['episodes'] + 1, episode_step=episode_steps,
-                                      action=np.asarray(action).tolist(), reward=float(reward), crashed=bool(terminated),
-                                      episode_return=float(cumulated_reward), exploration=self.agent.exploration_rate,
-                                      start=info.get('start'))
+                    telemetry.publish(('run', 'text', os.path.basename(self.working_dir)), ('mode', 'text', 'train'),
+                                      ('step', 'text', progress['steps']), ('episode', 'text', progress['episodes'] + 1),
+                                      ('episode_step', 'text', episode_steps), ('camera', 'image', Telemetry.image(next_state)),
+                                      ('action', 'graph', np.asarray(action).item()), ('reward', 'graph', float(reward)),
+                                      ('crashed', 'text', bool(terminated)), ('episode_return', 'text', float(cumulated_reward)),
+                                      ('exploration', 'text', self.agent.exploration_rate), ('start', 'text', info.get('start')))
 
                     if progress['steps'] % self.sample_batch_size == 0:
                         learner.save(progress)
@@ -228,13 +238,16 @@ class NeuroRacer:
                     action = self.agent.act(np.expand_dims(np.stack(stacked_states, axis=0), axis=0), explore=False)
                     next_state, reward, terminated, truncated, _ = self.env.step(action)
                     done = terminated or truncated
-                    stacked_states.append(preprocess(next_state, self.img_y_offset, self.img_x_scale, self.img_y_scale))
+                    next_state = preprocess(next_state, self.img_y_offset, self.img_x_scale, self.img_y_scale)
+                    stacked_states.append(next_state)
                     episode_steps += 1
                     cumulated_reward += reward
-                    telemetry.publish(run=os.path.basename(self.working_dir), mode='drive', episode=len(episodes) + 1,
-                                      episode_step=episode_steps,
-                                      action=np.asarray(action).tolist(), reward=float(reward), crashed=bool(terminated),
-                                      episode_return=float(cumulated_reward), start=info.get('start'))
+                    telemetry.publish(('run', 'text', os.path.basename(self.working_dir)), ('mode', 'text', 'drive'),
+                                      ('episode', 'text', len(episodes) + 1), ('episode_step', 'text', episode_steps),
+                                      ('camera', 'image', Telemetry.image(next_state)),
+                                      ('action', 'graph', np.asarray(action).item()), ('reward', 'graph', float(reward)),
+                                      ('crashed', 'text', bool(terminated)), ('episode_return', 'text', float(cumulated_reward)),
+                                      ('start', 'text', info.get('start')))
                 episodes.append({'steps': episode_steps, 'return': float(cumulated_reward), 'crashed': bool(terminated),
                                  'start': info.get('start')})
                 loginfo("episode {}: {}".format(len(episodes), json.dumps(episodes[-1])))

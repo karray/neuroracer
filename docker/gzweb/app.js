@@ -1,94 +1,117 @@
 import {SceneManager} from 'gzweb/src/SceneManager.ts';
 import {Topic} from 'gzweb/src/Topic.ts';
-const CAMERA = '/camera/image_raw';
-// JSON that the training processes publish; each topic gets its own section.
+// JSON that the training processes publish, in the format of docs/visualization.md; each topic gets its own section.
 const TELEMETRY = ['/telemetry/car', '/telemetry/learner'];
-const status = document.querySelector('#status');
-const toggle = document.querySelector('#connect');
-const controls = ['car', 'overview'].map(id => document.getElementById(id));
-const pip = document.querySelector('#pip');
-const frame = pip.querySelector('img');
-const caption = pip.querySelector('figcaption');
-const panel = document.querySelector('#telemetry-panel');
-let manager, subscription, retry, desired = true, camera = true, telemetry = false, generation = 0;
-function enabled(value) { controls.forEach(button => button.disabled = !value); }
-function showCamera() {
-  pip.hidden = false;
-  // The robot's own sensor, streamed as PNG while the world runs; paused worlds send no frames.
-  manager.subscribeToTopic(new Topic(CAMERA, png => {
-    URL.revokeObjectURL(frame.src);
-    frame.src = URL.createObjectURL(new Blob([png], {type: 'image/png'}));
-    frame.hidden = false;
-    caption.hidden = true;
-  }));
-}
-function hideCamera() {
-  pip.hidden = frame.hidden = true;
-  caption.hidden = false;
-  URL.revokeObjectURL(frame.src);
-  frame.removeAttribute('src');
-}
-function showTelemetry() {
-  panel.hidden = false;
-  for (const topic of TELEMETRY) {
-    manager.subscribeToTopic(new Topic(topic, message => render(topic, JSON.parse(message.data))));
-  }
-}
-// Fields that move within bounds, rather than count up, start as graphs; clicking a field switches it.
+const VERSION = 1;
+const VALID = {
+  text: value => value === null || ['string', 'number', 'boolean'].includes(typeof value),
+  graph: value => typeof value === 'number',
+  image: value => typeof value === 'string' && /^data:image\/(png|jpeg);base64,/.test(value),
+};
 const HISTORY = 300;
-let graphs = new Set(['/telemetry/car reward', '/telemetry/car action', '/telemetry/learner loss',
-                      '/telemetry/learner q', '/telemetry/learner updates_per_s']);
-try {
-  const saved = JSON.parse(localStorage.getItem('telemetry-graphs'));
-  if (Array.isArray(saved)) graphs = new Set(saved);
-} catch {}
 // A section disappears when its topic falls silent, e.g. the learner's while an agent only drives.
 const STALE_MS = 5000;
+const status = document.querySelector('#status');
+const toggle = document.querySelector('#connect');
+const panel = document.querySelector('#telemetry-panel');
+const images = document.querySelector('#images');
 const sections = new Map();
-function render(topic, values) {
+let manager, subscription, retry, connected = false, desired = true, telemetry = true, generation = 0;
+function showTelemetry() {
+  panel.hidden = images.hidden = false;
+  for (const topic of TELEMETRY) {
+    manager.subscribeToTopic(new Topic(topic, message => render(topic, message.data)));
+  }
+}
+function element(tag, text, className) {
+  return Object.assign(document.createElement(tag), {textContent: text ?? '', className: className ?? ''});
+}
+function parse(data) {
+  const message = JSON.parse(data);
+  if (message?.version !== VERSION) throw new Error(`unsupported telemetry version ${JSON.stringify(message?.version)}`);
+  if (Object.keys(message).length !== 2 || !Array.isArray(message.fields)) throw new Error('message must have exactly version and fields');
+  return message.fields;
+}
+function invalid(field, names) {
+  if (field === null || typeof field !== 'object' || Object.keys(field).sort().join() !== 'name,type,value') {
+    return 'field must have exactly name, type and value';
+  }
+  if (typeof field.name !== 'string') return 'name must be a string';
+  if (names.has(field.name)) return 'duplicate name';
+  if (!Object.hasOwn(VALID, field.type)) return `unknown type ${JSON.stringify(field.type)}`;
+  if (!VALID[field.type](field.value)) return `invalid ${field.type} value`;
+}
+function createRow(section, name, type) {
+  if (type === 'image') {
+    const figure = element('figure');
+    const image = figure.appendChild(Object.assign(document.createElement('img'), {alt: `${section.name} ${name}`}));
+    figure.append(element('figcaption', `${section.name} · ${name}`));
+    return {type, nodes: [figure], image};
+  }
+  const row = {type, value: element('dd'), history: []};
+  row.nodes = [element('dt', name), row.value];
+  if (type === 'graph') row.nodes.push(row.canvas = element('canvas'));
+  return row;
+}
+function format(value) {
+  if (value === null) return '—';
+  return typeof value === 'number' && !Number.isInteger(value) ? value.toFixed(3) : String(value);
+}
+// The section shows exactly the fields of its topic's latest message, in their order.
+function render(topic, data) {
   let section = sections.get(topic);
   if (!section) {
-    const heading = Object.assign(document.createElement('h2'), {textContent: topic.split('/').pop()});
-    section = {list: document.createElement('dl'), rows: new Map()};
-    section.nodes = [heading, section.list];
-    panel.append(...section.nodes);
+    const name = topic.split('/').pop();
+    section = {name, heading: element('h2', name), list: element('dl'), tiles: element('div'), rows: new Map()};
+    panel.append(section.heading, section.list);
+    images.append(section.tiles);
     sections.set(topic, section);
   }
   clearTimeout(section.timer);
-  section.timer = setTimeout(() => {
-    section.nodes.forEach(node => node.remove());
-    sections.delete(topic);
-  }, STALE_MS);
-  for (const [key, value] of Object.entries(values)) {
-    let row = section.rows.get(key);
-    if (!row) {
-      row = {term: Object.assign(document.createElement('dt'), {textContent: key}),
-             value: document.createElement('dd'), canvas: document.createElement('canvas'), history: []};
-      row.term.onclick = row.value.onclick = row.canvas.onclick = () => {
-        if (!row.history.length) return;
-        const name = `${topic} ${key}`;
-        if (!graphs.delete(name)) graphs.add(name);
-        try { localStorage.setItem('telemetry-graphs', JSON.stringify([...graphs])); } catch {}
-        show(name, row);
-      };
-      section.list.append(row.term, row.value, row.canvas);
-      section.rows.set(key, row);
+  section.timer = setTimeout(() => removeSection(topic), STALE_MS);
+  let fields;
+  try {
+    fields = parse(data);
+  } catch (error) {
+    section.rows.clear();
+    section.list.replaceChildren(element('dt', 'message'), element('dd', error.message, 'error'));
+    section.tiles.replaceChildren();
+    return;
+  }
+  const rows = new Map(), items = [], tiles = [];
+  for (const field of fields) {
+    const error = invalid(field, rows);
+    if (error) {
+      items.push(element('dt', typeof field?.name === 'string' ? field.name : '?'), element('dd', error, 'error'));
+      continue;
     }
-    row.value.textContent = typeof value === 'number' && !Number.isInteger(value) ? value.toFixed(3) : JSON.stringify(value);
-    const number = Array.isArray(value) && value.length === 1 ? value[0] : value;  // DDPG's action
-    if (typeof number === 'number') {
-      row.history.push(number);
+    let row = section.rows.get(field.name);
+    if (row?.type !== field.type) row = createRow(section, field.name, field.type);
+    rows.set(field.name, row);
+    if (row.type === 'image') {
+      row.image.src = field.value;
+      tiles.push(...row.nodes);
+      continue;
+    }
+    row.value.textContent = format(field.value);
+    if (row.type === 'graph') {
+      row.history.push(field.value);
       if (row.history.length > HISTORY) row.history.shift();
     }
-    show(`${topic} ${key}`, row);
+    items.push(...row.nodes);
   }
+  section.rows = rows;
+  section.list.replaceChildren(...items);
+  section.tiles.replaceChildren(...tiles);
+  rows.forEach(row => row.canvas && draw(row.canvas, row.history));
   // The panel grows to fit its longest value and keeps that width, instead of jittering.
   panel.style.minWidth = `${Math.max(parseFloat(panel.style.minWidth) || 0, panel.offsetWidth)}px`;
 }
-function show(name, row) {
-  row.canvas.hidden = !(graphs.has(name) && row.history.length);
-  row.term.classList.toggle('graphable', row.history.length > 0);
-  if (!row.canvas.hidden) draw(row.canvas, row.history);
+function removeSection(topic) {
+  const section = sections.get(topic);
+  clearTimeout(section.timer);
+  [section.heading, section.list, section.tiles].forEach(node => node.remove());
+  sections.delete(topic);
 }
 // Newest sample at the right edge, each value held until the next (actions are discrete).
 function draw(canvas, values) {
@@ -124,11 +147,9 @@ function draw(canvas, values) {
   context.fillText(label(low), 2, height - 2);
 }
 function hideTelemetry() {
-  panel.hidden = true;
-  panel.replaceChildren();
+  panel.hidden = images.hidden = true;
+  [...sections.keys()].forEach(removeSection);
   panel.style.minWidth = '';
-  sections.forEach(section => clearTimeout(section.timer));
-  sections.clear();
 }
 function disconnect() {
   generation++;
@@ -138,9 +159,8 @@ function disconnect() {
   manager?.destroy();
   manager = undefined;
   document.querySelector('#gz-scene').replaceChildren();
-  hideCamera();
   hideTelemetry();
-  enabled(false);
+  connected = false;
 }
 function connect() {
   disconnect();
@@ -151,15 +171,10 @@ function connect() {
   manager.connect(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   subscription = manager.getConnectionStatusAsObservable().subscribe(ready => {
     if (current !== generation) return;
-    enabled(ready);
+    connected = ready;
     if (ready) {
       clearTimeout(retry);
       status.textContent = 'Connected';
-      // Scene models are populated after the connection-ready notification.
-      requestAnimationFrame(() => {
-        if (current === generation) focusCar();
-      });
-      if (camera) showCamera();
       if (telemetry) showTelemetry();
     } else {
       status.textContent = 'Waiting for Gazebo…';
@@ -168,27 +183,10 @@ function connect() {
     }
   });
 }
-function focusCar() {
-  const car = manager?.getModels().find(model => model.name === 'racecar');
-  if (car) manager.thirdPersonFollow(car.gz3dName || car.name);
-}
-document.querySelector('#car').onclick = focusCar;
-document.querySelector('#overview').onclick = () => {
-  manager?.thirdPersonFollow(null);
-  manager?.resetView();
-};
-document.querySelector('#camera').onclick = event => {
-  camera = !camera;
-  event.target.setAttribute('aria-pressed', camera);
-  if (!manager || controls[0].disabled) return;
-  // Unsubscribing stops the server's PNG encoding for this client.
-  if (camera) showCamera();
-  else { manager.unsubscribeFromTopic(CAMERA); hideCamera(); }
-};
 document.querySelector('#telemetry').onclick = event => {
   telemetry = !telemetry;
   event.target.setAttribute('aria-pressed', telemetry);
-  if (!manager || controls[0].disabled) return;
+  if (!connected) return;
   if (telemetry) showTelemetry();
   else { TELEMETRY.forEach(topic => manager.unsubscribeFromTopic(topic)); hideTelemetry(); }
 };

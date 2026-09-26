@@ -12,27 +12,13 @@ function patch(file, replacements) {
 }
 
 patch('node_modules/gzweb/src/SceneManager.ts', [
-  ['this.scene.scene.renderer', 'this.scene.renderer'],
-  ['public disconnect(): void {', `public disconnect(): void {
-    cancelAnimationFrame(this.cancelAnimation);
-    this.previousRenderTimestampMs = 0;
-    this.models = [];`],
-  ['      if (this.scene.getParticleSystem()) {', `      // Limit preview rendering independently of physics / sensor rates.
-      if (document.hidden || timestampMs - this.previousRenderTimestampMs < 1000 / 30) return;
-      if (this.scene.getParticleSystem()) {`],
   ['      shaders: new Shaders(),', `      shaders: new Shaders(),
       defaultCameraPosition: new THREE.Vector3(2, 0.5, 2),
       defaultCameraLookAt: new THREE.Vector3(2, 3.7, 0.15),`],
 ]);
 patch('node_modules/gzweb/src/Scene.ts', [
   ['import * as JSZip from "jszip";', 'import JSZip from "jszip";'],
-  ['Math.max(bboxSize.x, bboxSize.y, bboxSize.z)', 'Math.max(bboxSize.x, bboxSize.y, bboxSize.z, 1.5)'],
   ['    this.renderer.renderLists.dispose();', '    this.controls.dispose();\n    this.renderer.forceContextLoss();\n    this.renderer.renderLists.dispose();'],
-  // Third-person follow defaults are sized for a full-size vehicle; frame the 0.5 m racecar.
-  ['new THREE.Vector3(\n    -6,\n    -2,\n    1.5,\n  )', 'new THREE.Vector3(-1.2, 0, 0.6)'],
-  ['new THREE.Vector3(12, -4, 0)', 'new THREE.Vector3(3, 0, 0)'],
-  // Upstream conjugates the followed model's own quaternion after a drag, mirroring it.
-  ['this.cameraTrackObject.quaternion.conjugate()', 'this.cameraTrackObject.quaternion.clone().conjugate()'],
   // GzWeb's STLLoader.parse already returns a Mesh; see the STLLoader patch below.
   ['function (geometry: THREE.BufferGeometry) {\n        mesh = new THREE.Mesh(geometry);', 'function (loaded: THREE.Mesh) {\n        mesh = loaded;'],
 ]);
@@ -40,10 +26,6 @@ patch('node_modules/gzweb/src/Scene.ts', [
 // STL load threw and silently re-fetched the mesh through Gazebo.
 patch('node_modules/gzweb/include/STLLoader.js', [
   ['onLoad(scope.parse(text));', 'onLoad(scope.parse(new Uint8Array(text)));'],
-]);
-patch('node_modules/gzweb/src/Transport.ts', [
-  // Jetty names camera messages gz.msgs.Image; only then are they streamed as PNG.
-  ['"ignition.msgs.Image"', '"gz.msgs.Image"'],
 ]);
 patch('node_modules/three-nebula/build/esm/utils/uid.js', [
   ["import uid from 'uuid/v1';", "import {v1 as uid} from 'uuid';"],
